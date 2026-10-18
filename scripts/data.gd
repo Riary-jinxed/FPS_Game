@@ -2,7 +2,7 @@
 # Tout l'équilibrage se règle ici.
 extends RefCounted
 
-const WAVES_PER_ZONE := 5 # la musique change de zone tous les N vagues (un cycle de boss)
+const WAVES_PER_ZONE := 10 # 7 zones de 10 rounds (mini boss round 5, boss de zone round 10)
 
 const WEAPONS := {
 	"rifle": {
