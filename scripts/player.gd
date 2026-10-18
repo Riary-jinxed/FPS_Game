@@ -1,10 +1,13 @@
-# Joueur : déplacements (double saut, roulade, glissade), caméra, arme, rechargements et chargeurs lancés.
+# Joueur : déplacements (double saut, roulade, glissade, wall run, wall jump), caméra, arme, rechargements et chargeurs lancés.
+# Les entrées sont lues dans read_input() puis appliquées par simulate(intent) : la logique ne lit jamais
+# le clavier directement, ce qui permettra plus tard de piloter un coéquipier depuis le réseau.
 extends CharacterBody3D
 
 const ThrownMag = preload("res://scripts/thrown_mag.gd")
 const ROLL_DUR := 0.38
 const SENS := 0.0022
 const JOY_SENS := 3.2
+const WALLRUN_DUR := 1.4
 
 var game
 var head: Node3D
@@ -36,6 +39,13 @@ var slide_cd := 0.0
 var air := false
 var eye := 1.6
 var bob := 0.0
+var wallrun_t := 0.0
+var wallrun_cd := 0.0
+var wall_n := Vector3.ZERO
+var skill := 0.0         # jauge de compétence, 0 à 100
+var look_acc := Vector2.ZERO
+var forced_intent := {}  # rempli par le test auto (et plus tard par le réseau)
+var intent := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
 
 func _ready() -> void:
 	collision_layer = 4
@@ -76,12 +86,13 @@ func reset(weapon: Dictionary) -> void:
 	velocity = Vector3.ZERO
 	jumps = 0
 	roll_cd = 0.0; roll_t = 0.0; iframes = 0.0; slide_t = 0.0; slide_cd = 0.0; roll_grace = 0.0
+	wallrun_t = 0.0; wallrun_cd = 0.0; skill = 0.0
 	reload_t = 0.0; fire_cd = 0.0; shot_count = 0
 	for t in thrown:
 		if is_instance_valid(t):
 			t.queue_free()
 	thrown.clear()
-	global_position = Vector3(0, 0.1, 18)
+	global_position = Vector3(0, 0.1, 16)
 	_build_guns()
 
 func _mat(c: Color, emissive := false) -> StandardMaterial3D:
@@ -156,15 +167,45 @@ func _unhandled_input(event: InputEvent) -> void:
 	if game.state != "play":
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		yaw -= event.relative.x * SENS
-		pitch = clampf(pitch - event.relative.y * SENS, -1.5, 1.5)
+		look_acc += event.relative * SENS
+
+func read_input(delta: float) -> Dictionary:
+	# entrées locales (clavier, souris, manette) -> intention du joueur
+	var look := look_acc
+	look_acc = Vector2.ZERO
+	var stick := Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y))
+	if stick.length() > 0.15:
+		look += Vector2(stick.x, stick.y * 0.7) * JOY_SENS * delta
+	return {
+		"move": Input.get_vector("move_left", "move_right", "move_forward", "move_back"),
+		"look": look,
+		"jump": Input.is_action_just_pressed("jump"),
+		"roll": Input.is_action_just_pressed("roll"),
+		"slide": Input.is_action_just_pressed("slide"),
+		"reload": Input.is_action_just_pressed("reload"),
+		"skill": Input.is_action_just_pressed("skill"),
+		"fire": Input.is_action_pressed("fire"),
+	}
 
 func move_input() -> Vector3:
-	var v2 := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	var v2: Vector2 = intent.move
 	var v := Vector3(v2.x, 0, v2.y).rotated(Vector3.UP, yaw)
 	return v.normalized() if v.length() > 1.0 else v
 
 func jump() -> void:
+	if wallrun_t > 0.0 or (is_on_wall() and not is_on_floor() and wallrun_cd <= 0.0 and _wall_ok(get_wall_normal())):
+		# wall jump : on repousse du mur en gardant l'élan
+		var n := wall_n if wallrun_t > 0.0 else _flat(get_wall_normal())
+		var along := Vector3(velocity.x, 0, velocity.z)
+		along -= n * along.dot(n)
+		velocity = along * 1.05 + n * 8.5
+		velocity.y = 8.5
+		wallrun_t = 0.0
+		wallrun_cd = 0.35
+		jumps = 1
+		game.sfx.play("dash")
+		game.add_style("WALL JUMP", 15)
+		return
 	if slide_t > 0.0:
 		# saut depuis une glissade : on garde l'élan
 		slide_t = 0.0
@@ -186,7 +227,7 @@ func roll() -> void:
 	var f := move_input()
 	if f.length() < 0.1:
 		f = Vector3(0, 0, -1).rotated(Vector3.UP, yaw)
-	var s := Input.get_axis("move_left", "move_right")
+	var s: float = intent.move.x
 	roll_sign = signf(s) if absf(s) > 0.2 else 1.0
 	f = f.normalized()
 	velocity.x = f.x * 22.0
@@ -195,6 +236,7 @@ func roll() -> void:
 	iframes = ROLL_DUR + 0.05
 	dodged = false
 	slide_t = 0.0
+	wallrun_t = 0.0
 	roll_cd = game.up.roll_cd
 	game.sfx.play("dash")
 
@@ -223,23 +265,25 @@ func start_reload() -> void:
 func _physics_process(delta: float) -> void:
 	if game.state != "play":
 		return
+	intent = forced_intent.duplicate() if not forced_intent.is_empty() else read_input(delta)
+	simulate(intent, delta)
+
+func simulate(it: Dictionary, delta: float) -> void:
 	roll_cd = maxf(0.0, roll_cd - delta)
 	slide_cd = maxf(0.0, slide_cd - delta)
+	wallrun_cd = maxf(0.0, wallrun_cd - delta)
 	iframes = maxf(0.0, iframes - delta)
 	roll_grace = maxf(0.0, roll_grace - delta)
 	if game.up.regen > 0.0 and hp < game.up.max_hp:
 		hp = minf(game.up.max_hp, hp + game.up.regen * delta)
+	yaw -= it.look.x
+	pitch = clampf(pitch - it.look.y, -1.5, 1.5)
 
-	if Input.is_action_just_pressed("jump"): jump()
-	if Input.is_action_just_pressed("roll"): roll()
-	if Input.is_action_just_pressed("slide"): slide()
-	if Input.is_action_just_pressed("reload"): start_reload()
-
-	# vue à la manette
-	var look := Vector2(Input.get_joy_axis(0, JOY_AXIS_RIGHT_X), Input.get_joy_axis(0, JOY_AXIS_RIGHT_Y))
-	if look.length() > 0.15:
-		yaw -= look.x * JOY_SENS * delta
-		pitch = clampf(pitch - look.y * JOY_SENS * 0.7 * delta, -1.5, 1.5)
+	if it.jump: jump()
+	if it.roll: roll()
+	if it.slide: slide()
+	if it.reload: start_reload()
+	if it.skill: game.activate_skill()
 
 	# arme
 	fire_cd -= delta
@@ -253,7 +297,7 @@ func _physics_process(delta: float) -> void:
 				G.mag.position = G.mag_home
 				if G.extra:
 					G.extra.position.z = -0.33
-	if Input.is_action_pressed("fire") and fire_cd <= 0.0 and reload_t <= 0.0:
+	if it.fire and fire_cd <= 0.0 and reload_t <= 0.0:
 		shoot()
 
 	# mouvement
@@ -269,18 +313,93 @@ func _physics_process(delta: float) -> void:
 		velocity.z *= k
 		if Vector2(velocity.x, velocity.z).length() < 5.0 or not is_on_floor():
 			slide_t = 0.0
+	elif wallrun_t > 0.0:
+		_wallrun_step(delta)
 	else:
 		var accel := 14.0 if is_on_floor() else 4.0
-		var spd: float = 10.5 * game.up.speed
+		var spd: float = 10.5 * game.up.speed * (1.15 if game.skill_t > 0.0 else 1.0)
 		velocity.x += (wish.x * spd - velocity.x) * minf(1.0, accel * delta)
 		velocity.z += (wish.z * spd - velocity.z) * minf(1.0, accel * delta)
-	velocity.y -= 24.0 * delta
+	if wallrun_t <= 0.0:
+		velocity.y -= 24.0 * delta
 	move_and_slide()
+	_check_wallrun(it)
 	if is_on_floor():
 		jumps = 0
-	air = not is_on_floor() and _height() > 0.5
+	air = (not is_on_floor() and _height() > 0.5) or wallrun_t > 0.0
 	rotation.y = yaw
+	if global_position.y < -4.0:
+		game.player_fell()
 	_update_camera(delta, wish)
+
+# ---------- Wall run ----------
+static func _flat(n: Vector3) -> Vector3:
+	n.y = 0.0
+	return n.normalized()
+
+func _wall_ok(n: Vector3) -> bool:
+	return absf(n.y) < 0.3
+
+func _check_wallrun(it: Dictionary) -> void:
+	if wallrun_t > 0.0:
+		var wn := get_wall_normal() if is_on_wall() else _side_wall()
+		if is_on_floor() or wn == Vector3.ZERO:
+			_end_wallrun()
+		else:
+			wall_n = _flat(wn)
+		return
+	if is_on_floor() or wallrun_cd > 0.0 or roll_t > 0.0 or it.move.y > -0.3:
+		return
+	var n := get_wall_normal() if is_on_wall() else _side_wall()
+	if n == Vector3.ZERO or not _wall_ok(n) or _height() < 0.8:
+		return
+	n = _flat(n)
+	var along := Vector3(velocity.x, 0, velocity.z)
+	along -= n * along.dot(n)
+	if along.length() < 4.0:
+		return
+	wall_n = n
+	wallrun_t = WALLRUN_DUR * game.up.wallrun
+	velocity.y = maxf(velocity.y, 2.0)
+	jumps = 1
+	game.sfx.play("wall")
+
+func _side_wall() -> Vector3:
+	# un mur juste à gauche ou à droite compte aussi : pas besoin de foncer dedans pour s'y accrocher
+	var space := get_world_3d().direct_space_state
+	var from := global_position + Vector3(0, 1.0, 0)
+	var right := Vector3(1, 0, 0).rotated(Vector3.UP, yaw)
+	for side in [right, -right]:
+		var q := PhysicsRayQueryParameters3D.create(from, from + side * 0.9, 1, [get_rid()])
+		var r := space.intersect_ray(q)
+		if r:
+			return r.normal
+	return Vector3.ZERO
+
+func _wallrun_step(delta: float) -> void:
+	wallrun_t -= delta
+	var along := Vector3(velocity.x, 0, velocity.z)
+	along -= wall_n * along.dot(wall_n)
+	if along.length() < 2.0:
+		_end_wallrun()
+		return
+	along = along.normalized() * maxf(along.length(), 10.5 * game.up.speed)
+	velocity.x = along.x - wall_n.x * 3.0
+	velocity.z = along.z - wall_n.z * 3.0
+	velocity.y = maxf(velocity.y - 5.0 * delta, -1.2)
+	if wallrun_t <= 0.0:
+		_end_wallrun()
+
+func _end_wallrun() -> void:
+	wallrun_t = 0.0
+	wallrun_cd = 0.2
+
+func launch(v: Vector3) -> void:
+	# jump pad
+	velocity = Vector3(velocity.x * 0.5 + v.x, v.y, velocity.z * 0.5 + v.z)
+	jumps = 1
+	slide_t = 0.0
+	wallrun_t = 0.0
 
 func _height() -> float:
 	var q := PhysicsRayQueryParameters3D.create(global_position + Vector3.UP * 0.1, global_position + Vector3.DOWN * 50.0, 1)
@@ -298,6 +417,9 @@ func _update_camera(delta: float, wish: Vector3) -> void:
 	elif slide_t > 0.0:
 		target_eye = 0.8
 		cam_roll = 0.07
+	elif wallrun_t > 0.0:
+		var right := Vector3(1, 0, 0).rotated(Vector3.UP, yaw)
+		cam_roll = -0.16 * signf(wall_n.dot(right))
 	eye += (target_eye - eye) * minf(1.0, delta * (40.0 if roll_t > 0.0 else 14.0))
 	var moving := is_on_floor() and wish.length() > 0.1 and slide_t <= 0.0
 	if moving:
@@ -305,10 +427,12 @@ func _update_camera(delta: float, wish: Vector3) -> void:
 	game.shake = maxf(0.0, game.shake - delta * 2.5)
 	head.position.y = eye + (sin(bob) * 0.04 if moving else 0.0)
 	head.rotation.x = pitch
-	cam.rotation.z = cam_roll
+	cam.rotation.z = lerp_angle(cam.rotation.z, cam_roll, 1.0 if roll_t > 0.0 else minf(1.0, delta * 10.0))
 	cam.h_offset = randf_range(-0.1, 0.1) * game.shake
 	cam.v_offset = randf_range(-0.1, 0.1) * game.shake
-	var fov_t := 90.0 if roll_t > 0.0 else (88.0 if slide_t > 0.0 else 80.0)
+	var fov_t := 90.0 if roll_t > 0.0 else (88.0 if slide_t > 0.0 or wallrun_t > 0.0 else 80.0)
+	if game.skill_t > 0.0:
+		fov_t += 6.0
 	cam.fov += (fov_t - cam.fov) * minf(1.0, delta * 10.0)
 	var p: float = 1.0 - reload_t / W.reload if reload_t > 0.0 else -1.0
 	for G in guns:
@@ -407,8 +531,10 @@ func shoot() -> void:
 	if ammo <= 0:
 		start_reload()
 		return
-	ammo -= 1
-	fire_cd = W.rate
+	var surge: bool = game.skill_t > 0.0
+	if not surge:
+		ammo -= 1
+	fire_cd = W.rate / (1.25 if surge else 1.0)
 	shot_count += 1
 	var G: Dictionary = guns[shot_count % guns.size()]
 	G.kick = 1.0
@@ -424,6 +550,8 @@ func shoot() -> void:
 	var muzzle: Vector3 = G.g.to_global(G.muzzle)
 	var last_shot: bool = game.up.last_shots > 0 and ammo < game.up.last_shots
 	var dmg_mul := 2.0 if last_shot else 1.0
+	if surge:
+		dmg_mul *= 1.5
 	if game.up.air_dmg > 0 and air:
 		dmg_mul *= 1.0 + 0.5 * game.up.air_dmg
 	# pompe + recul propulsif : tirer en l'air te projette en arrière
@@ -466,7 +594,7 @@ func shoot() -> void:
 				end = r.position
 				var head_hit: bool = r.position.y > en.global_position.y + en.T.h * 0.8
 				var dmg: float = W.dmg * dmg_mul * (game.up.crit if head_hit else 1.0)
-				game.damage_enemy(en, dmg, r.position, { "src": "gun", "head": head_hit })
+				game.damage_enemy(en, dmg, r.position, { "src": "gun", "head": head_hit, "from": origin })
 				if game.up.ricochet > 0 and randf() < 0.3 * game.up.ricochet:
 					game.ricochet(en, r.position, dmg * 0.6)
 				hit_any = true

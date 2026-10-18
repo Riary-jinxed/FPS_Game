@@ -30,11 +30,11 @@ func _physics_process(delta: float) -> void:
 	if game.state != "play":
 		return
 	var from := global_position
-	var to := from + vel * delta
-	life -= delta
+	var to: Vector3 = from + vel * delta * game.enemy_slow
+	life -= delta * game.enemy_slow
 	var p = game.player
 	var pp: Vector3 = p.global_position
-	var near := absf(to.x - pp.x) < 0.5 + radius and absf(to.z - pp.z) < 0.5 + radius and to.y > pp.y - radius and to.y < pp.y + 1.8 + radius
+	var near: bool = absf(to.x - pp.x) < 0.5 + radius and absf(to.z - pp.z) < 0.5 + radius and to.y > pp.y - radius and to.y < pp.y + 1.8 + radius
 	var hit := false
 	if near and not dodged:
 		hit = game.hurt_player(dmg)

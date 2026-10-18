@@ -1,8 +1,11 @@
-# Interface : HUD de combat, menu de choix d'arme, augments, pause, game over. Tout est construit en code.
+# Interface : HUD de combat, menu (perso et arme), augments, shop, arbre, pause, game over, victoire. Tout est construit en code.
 extends CanvasLayer
 
 signal weapon_picked(id: String)
 signal augment_picked(index: int)
+signal shop_buy(index: int)
+signal tree_pick(id: String)
+signal continue_pressed
 signal resume_pressed
 signal retry_pressed
 signal menu_pressed
@@ -32,6 +35,11 @@ var banner_t := 0.0
 var boss_box: VBoxContainer
 var weapon_box: GridContainer
 var aug_box: GridContainer
+var shop_box: GridContainer
+var tree_box: HBoxContainer
+var glitch_rect: ColorRect
+var surge_rect: ColorRect
+var glitch_t := 0.0
 
 func _ready() -> void:
 	layer = 10
@@ -47,8 +55,11 @@ func _ready() -> void:
 	_build_hud()
 	_build_menu()
 	_build_augments()
+	_build_shop()
+	_build_tree()
 	_build_pause()
 	_build_over()
+	_build_victory()
 
 # ---------- Aides de construction ----------
 func _label(text: String, size: int, color := INK, mono := false, body := false) -> Label:
@@ -150,9 +161,11 @@ func _button(text: String, primary := true) -> Button:
 	b.add_theme_color_override("font_focus_color", fc)
 	return b
 
-func _card(key: String, tag: String, tag_color: Color, name: String, desc: String, stats := [], highlight := false) -> Button:
+func _card(key: String, tag: String, tag_color: Color, name: String, desc: String, stats := [], highlight := false, footer := "", dim := false, height := 0.0) -> Button:
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(264, 250 if stats.size() > 0 else 200)
+	b.custom_minimum_size = Vector2(264, height if height > 0.0 else (250.0 if stats.size() > 0 else 200.0))
+	if dim:
+		b.modulate = Color(1, 1, 1, 0.4)
 	var n := StyleBoxFlat.new(); n.bg_color = Color(1, 1, 1, 0.04)
 	n.border_color = Color(1, 0.35, 0.21, 0.6) if highlight else Color(1, 1, 1, 0.12); n.set_border_width_all(1)
 	var hv := n.duplicate(); hv.border_color = HOT; hv.bg_color = Color(1, 0.35, 0.21, 0.1)
@@ -184,6 +197,10 @@ func _card(key: String, tag: String, tag_color: Color, name: String, desc: Strin
 		var k := _label(st[0], 12, DIM, true); k.custom_minimum_size = Vector2(80, 0)
 		row.add_child(k); row.add_child(_label(st[1], 12, INK, true))
 		v.add_child(row)
+	if footer != "":
+		var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL; sp.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		v.add_child(sp)
+		v.add_child(_label(footer, 18, WARN))
 	return b
 
 # ---------- HUD de combat ----------
@@ -200,6 +217,55 @@ func _build_hud() -> void:
 	var sm := ShaderMaterial.new(); sm.shader = sh
 	vignette.material = sm
 	hud.add_child(vignette)
+	surge_rect = ColorRect.new()
+	surge_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	surge_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ssh := Shader.new()
+	ssh.code = """shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
+void fragment() {
+	float d = distance(UV, vec2(0.5));
+	vec2 off = (UV - 0.5) * 0.006;
+	vec3 c = vec3(texture(screen_tex, SCREEN_UV + off).r, texture(screen_tex, SCREEN_UV).g, texture(screen_tex, SCREEN_UV - off).b);
+	float edge = smoothstep(0.3, 0.8, d);
+	c = mix(c, vec3(0.25, 0.85, 0.8), edge * 0.22);
+	COLOR = vec4(c, 1.0);
+}"""
+	var ssm := ShaderMaterial.new(); ssm.shader = ssh
+	surge_rect.material = ssm
+	surge_rect.visible = false
+	hud.add_child(surge_rect)
+	glitch_rect = ColorRect.new()
+	glitch_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	glitch_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var gsh := Shader.new()
+	gsh.code = """shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
+uniform float strength = 0.0;
+float h(float x) { return fract(sin(x * 91.7) * 43758.5); }
+void fragment() {
+	float t = floor(TIME * 18.0);
+	float band = floor(SCREEN_UV.y * 24.0);
+	float r = h(band + t);
+	float shift = (r > 0.7 ? (h(band * 3.1 + t) - 0.5) * 0.08 : 0.0) * strength;
+	vec2 uv = SCREEN_UV + vec2(shift, 0.0);
+	vec3 c = vec3(texture(screen_tex, uv + vec2(0.006 * strength, 0.0)).r, texture(screen_tex, uv).g, texture(screen_tex, uv - vec2(0.006 * strength, 0.0)).b);
+	float scan = 0.85 + 0.15 * sin(SCREEN_UV.y * 900.0);
+	c *= mix(1.0, scan, strength);
+	c = mix(c, vec3(0.65, 1.0, 0.0) * h(band + t * 1.3), step(0.94, r) * 0.35 * strength);
+	COLOR = vec4(c, 1.0);
+}"""
+	var gsm := ShaderMaterial.new(); gsm.shader = gsh
+	glitch_rect.material = gsm
+	glitch_rect.visible = false
+	hud.add_child(glitch_rect)
+	lbl.glitch = _label("SIGNAL BROUILLÉ", 16, Color("a6ff00"), true)
+	lbl.glitch.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	lbl.glitch.position.y += 70
+	lbl.glitch.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	lbl.glitch.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.glitch.visible = false
+	hud.add_child(lbl.glitch)
 
 	cross = Control.new()
 	cross.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -244,7 +310,8 @@ func _build_hud() -> void:
 	hud.add_child(boss_box)
 
 	var tl := _corner(Control.PRESET_TOP_LEFT, false)
-	tl.add_child(_caps("Vague"))
+	lbl.zone = _label("ZONE 1", 12, HOT, true); tl.add_child(lbl.zone)
+	tl.add_child(_caps("Round"))
 	lbl.wave = _label("1", 38, INK); tl.add_child(lbl.wave)
 	lbl.remain = _caps("0 ennemis"); tl.add_child(lbl.remain)
 
@@ -265,6 +332,22 @@ func _build_hud() -> void:
 	bars.hp = _bar(COOL); bl.add_child(bars.hp)
 	bl.add_child(_caps("Roulade"))
 	bars.roll = _bar(WARN); bl.add_child(bars.roll)
+	var eco := HBoxContainer.new(); eco.add_theme_constant_override("separation", 18); eco.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.credits = _label("¤ 0", 20, WARN); eco.add_child(lbl.credits)
+	lbl.level = _label("NIV. 1", 20, INK); eco.add_child(lbl.level)
+	bl.add_child(eco)
+	bars.xp = _bar(Color("b25cff"), 220, 4); bl.add_child(bars.xp)
+
+	# compétence au centre, en bas
+	var sk := VBoxContainer.new()
+	sk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(sk)
+	sk.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 26)
+	sk.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	sk.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	lbl.skill = _label("SURCHARGE", 12, DIM, true); lbl.skill.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sk.add_child(lbl.skill)
+	bars.skill = _bar(COOL, 320, 6); sk.add_child(bars.skill)
 
 	var br := _corner(Control.PRESET_BOTTOM_RIGHT, true)
 	lbl.wname = _right(_caps("Fusil")); br.add_child(lbl.wname)
@@ -289,6 +372,14 @@ func _process(delta: float) -> void:
 		vig_t -= delta
 		if vig_t <= 0.0:
 			(vignette.material as ShaderMaterial).set_shader_parameter("strength", 0.0)
+	if glitch_t > 0.0:
+		glitch_t -= delta
+		var gm := glitch_rect.material as ShaderMaterial
+		gm.set_shader_parameter("strength", clampf(glitch_t / 0.6, 0.0, 1.0))
+		lbl.glitch.modulate.a = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.03)
+		if glitch_t <= 0.0:
+			glitch_rect.visible = false
+			lbl.glitch.visible = false
 	if banner_t > 0.0:
 		banner_t -= delta
 		lbl.banner_box.modulate.a = clampf(banner_t / 0.3, 0.0, 1.0)
@@ -328,31 +419,56 @@ func rank_pop() -> void:
 	tw.tween_property(lbl.rank, "scale", Vector2.ONE * 1.18, 0.07)
 	tw.tween_property(lbl.rank, "scale", Vector2.ONE, 0.1)
 
+func glitch(t: float) -> void:
+	glitch_t = maxf(glitch_t, t)
+	glitch_rect.visible = true
+	lbl.glitch.visible = true
+
+func set_surge(on: bool) -> void:
+	surge_rect.visible = on
+
+func _scramble(t: String) -> String:
+	# HUD brouillé par un hacker : les chiffres deviennent illisibles
+	if glitch_t <= 0.0:
+		return t
+	var out := ""
+	var junk := "#%&@$?!01"
+	for ch in t:
+		out += junk[randi() % junk.length()] if randf() < 0.6 and ch != " " else ch
+	return out
+
 func show_boss(name: String) -> void:
 	lbl.boss.text = name.to_upper()
 	boss_box.visible = true
 
 func update_hud(d: Dictionary) -> void:
-	lbl.hp.text = str(d.hp)
+	lbl.hp.text = _scramble(str(d.hp))
 	bars.hp.value = d.hp_pct
 	(bars.hp.get_theme_stylebox("fill") as StyleBoxFlat).bg_color = HOT if d.hp_pct < 35 else COOL
 	bars.roll.value = d.roll_pct
-	lbl.score.text = str(d.score)
+	lbl.score.text = _scramble(str(d.score))
 	if lbl.rank.text != d.rank:
 		lbl.rank.text = d.rank
 		lbl.rank.add_theme_color_override("font_color", RANK_COLORS.get(d.rank, INK))
 	bars.style.value = d.style_pct
 	lbl.chain.text = d.chain
-	lbl.wave.text = str(d.wave)
-	lbl.remain.text = d.remain.to_upper()
+	lbl.zone.text = d.zone.to_upper()
+	lbl.wave.text = _scramble(d.wave)
+	lbl.remain.text = _scramble(d.remain.to_upper())
 	lbl.wname.text = d.wname.to_upper()
-	lbl.ammo.text = d.ammo
+	lbl.ammo.text = _scramble(d.ammo)
 	lbl.reserve.text = d.reserve.to_upper()
 	bars.reload.visible = d.reload_pct >= 0.0
 	bars.reload.value = maxf(d.reload_pct, 0.0)
 	lbl.maghint.visible = d.mag_flying
 	boss_box.visible = d.boss_pct >= 0.0
 	bars.boss.value = maxf(d.boss_pct, 0.0)
+	lbl.credits.text = _scramble("¤ %d" % d.credits)
+	lbl.level.text = "NIV. %d" % d.level + ("  +%d PT" % d.points if d.points > 0 else "")
+	bars.xp.value = d.xp_pct
+	bars.skill.value = d.skill_pct
+	lbl.skill.text = d.skill_txt
+	lbl.skill.add_theme_color_override("font_color", COOL if d.skill_ready else DIM)
 
 func set_mute(m: bool) -> void:
 	lbl.mute.text = "MUSIQUE COUPÉE (M)" if m else " "
@@ -360,39 +476,51 @@ func set_mute(m: bool) -> void:
 # ---------- Écrans ----------
 func _build_menu() -> void:
 	var v := _screen("menu", 900)
-	v.add_child(_caps("Prototype · arène 01"))
+	v.add_child(_caps("Zone 1 · Ville néon"))
 	v.add_child(_title("Horde", "Breaker"))
-	var p := _label("Des vagues de plus en plus grosses, un boss toutes les 5 vagues. Enchaîne les kills aériens, les esquives et les tirs de chargeur pour faire monter ton style.", 17, DIM, false, true)
+	var p := _label("10 rounds dans la ville néon : un mini-boss au round 5, le boss de zone au round 10, un shop après les rounds 3, 6 et 9. Enchaîne les kills aériens, les wall runs et les tirs de chargeur : ton combo fait monter le score et charge ta compétence.", 16, DIM, false, true)
 	p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(p)
-	v.add_child(_caps("Choisis ton arme pour la partie"))
+	var ch := HBoxContainer.new(); ch.add_theme_constant_override("separation", 18)
+	lbl.char_name = _label("KADE", 26, INK)
+	ch.add_child(lbl.char_name)
+	var cv := VBoxContainer.new(); cv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.char_title = _label("", 12, HOT, true); cv.add_child(lbl.char_title)
+	lbl.char_skill = _label("", 14, INK, false, true); lbl.char_skill.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cv.add_child(lbl.char_skill)
+	ch.add_child(cv)
+	v.add_child(ch)
+	v.add_child(_caps("Choisis ton arme pour le run"))
 	weapon_box = GridContainer.new(); weapon_box.columns = 3
 	weapon_box.add_theme_constant_override("h_separation", 12)
 	v.add_child(weapon_box)
-	var keys := GridContainer.new(); keys.columns = 2
+	var keys := GridContainer.new(); keys.columns = 4
 	keys.add_theme_constant_override("h_separation", 18)
-	for row in [["ZQSD / WASD", "Se déplacer"], ["Souris", "Viser, clic gauche pour tirer"], ["Espace", "Sauter (double saut)"],
-			["Shift", "Roulade, invincible pendant la roulade"], ["C", "Glissade en courant, saute pour garder l'élan"],
-			["R", "Recharger, puis tire sur le chargeur en vol pour l'envoyer sur un ennemi"], ["P · Échap", "Pause"], ["M", "Couper la musique"],
-			["Manette", "Sticks, A sauter, LB roulade, B glissade, X recharger, RT tirer"]]:
-		keys.add_child(_label(row[0], 13, WARN, true))
-		keys.add_child(_label(row[1], 13, INK, true))
+	for row in [["ZQSD / WASD", "Se déplacer"], ["Souris", "Viser, clic gauche pour tirer"], ["Espace", "Sauter, double saut, wall jump"],
+			["Shift", "Roulade invincible"], ["C", "Glissade en courant"], ["Contre un mur", "Saute et avance : wall run"],
+			["R", "Recharger, tire sur le chargeur en vol"], ["E · clic droit", "Compétence quand la jauge est pleine"], ["P · Échap", "Pause · M musique"],
+			["Manette", "A saut, LB roulade, B glissade, X recharger, Y compétence, RT tirer"]]:
+		keys.add_child(_label(row[0], 12, WARN, true))
+		keys.add_child(_label(row[1], 12, INK, true))
 	v.add_child(keys)
 	lbl.best = _label("", 12, DIM, true)
 	v.add_child(lbl.best)
 
-func show_menu(weapons: Dictionary, order: Array, chosen: String, best: int) -> void:
+func show_menu(character: Dictionary, weapons: Dictionary, chosen: String, best: int, best_wave: int) -> void:
+	lbl.char_name.text = character.name.to_upper()
+	lbl.char_title.text = (character.title + " · compétence : " + character.skill).to_upper()
+	lbl.char_skill.text = character.blurb + " " + character.skill + " : " + character.skill_desc
 	for c in weapon_box.get_children():
 		c.queue_free()
 	var i := 1
-	for id in order:
+	for id in character.weapons:
 		var w: Dictionary = weapons[id]
 		var last: bool = id == chosen
-		var b := _card(str(i), "Dernière arme jouée" if last else "Arme", WARN, w.name, w.blurb, w.stats, last)
+		var b := _card(str(i), "Dernière arme jouée" if last else "Arme", WARN, w.name, w.blurb, w.stats, last, "", false, 230.0)
 		b.pressed.connect(func(): weapon_picked.emit(id))
 		weapon_box.add_child(b)
 		i += 1
-	lbl.best.text = "Meilleur score : %d" % best if best > 0 else ""
+	lbl.best.text = ("Meilleur score : %d · meilleur round : %d / 10" % [best, best_wave]) if best > 0 else ""
 	show_screen("menu")
 
 func _build_augments() -> void:
@@ -406,7 +534,7 @@ func _build_augments() -> void:
 	lbl.aug_owned.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(lbl.aug_owned)
 
-func show_augments(choices: Array, taken: Dictionary, wave: int, weapon_name: String, owned: String) -> void:
+func show_augments(choices: Array, taken: Dictionary, title: String, weapon_name: String, owned: String) -> void:
 	for c in aug_box.get_children():
 		c.queue_free()
 	for i in choices.size():
@@ -417,9 +545,111 @@ func show_augments(choices: Array, taken: Dictionary, wave: int, weapon_name: St
 		var idx := i
 		b.pressed.connect(func(): augment_picked.emit(idx))
 		aug_box.add_child(b)
-	lbl.aug_title.text = ("Vague %d nettoyée" % wave).to_upper()
+	lbl.aug_title.text = title.to_upper()
 	lbl.aug_owned.text = owned
 	show_screen("augment")
+
+func _build_shop() -> void:
+	var v := _screen("shop", 900)
+	lbl.shop_sub = _caps(""); v.add_child(lbl.shop_sub)
+	var top := HBoxContainer.new()
+	var t := _title("Marché", "noir"); t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(t)
+	var money := VBoxContainer.new()
+	lbl.shop_credits = _right(_label("¤ 0", 36, WARN)); money.add_child(lbl.shop_credits)
+	lbl.shop_hp = _right(_caps("")); money.add_child(lbl.shop_hp)
+	top.add_child(money)
+	v.add_child(top)
+	shop_box = GridContainer.new(); shop_box.columns = 3
+	shop_box.add_theme_constant_override("h_separation", 12)
+	shop_box.add_theme_constant_override("v_separation", 12)
+	v.add_child(shop_box)
+	var b := _button("Continuer (Entrée)")
+	b.pressed.connect(func(): continue_pressed.emit())
+	v.add_child(b)
+
+func show_shop(offers: Array, credits: int, hp: int, max_hp: int, sub: String) -> void:
+	for c in shop_box.get_children():
+		c.queue_free()
+	for i in offers.size():
+		var o: Dictionary = offers[i]
+		var sold: bool = o.get("sold", false)
+		var footer := "VENDU" if sold else "¤ %d" % o.price
+		var b := _card(str(i + 1), o.tag, HOT if o.kind in ["aug", "upgrade"] else (COOL if o.kind == "heal" else WARN), o.name, o.desc, [], false, footer, sold or credits < o.price, 190.0)
+		var idx := i
+		b.pressed.connect(func(): shop_buy.emit(idx))
+		shop_box.add_child(b)
+	lbl.shop_credits.text = "¤ %d" % credits
+	lbl.shop_hp.text = "SANTÉ %d / %d" % [hp, max_hp]
+	lbl.shop_sub.text = sub.to_upper()
+	show_screen("shop")
+
+func _build_tree() -> void:
+	var v := _screen("tree", 900)
+	lbl.tree_sub = _caps(""); v.add_child(lbl.tree_sub)
+	v.add_child(_title("Arbre de", "compétences"))
+	lbl.tree_points = _label("", 16, WARN, true); v.add_child(lbl.tree_points)
+	tree_box = HBoxContainer.new()
+	tree_box.add_theme_constant_override("separation", 12)
+	v.add_child(tree_box)
+	var b := _button("Garder mes points (Entrée)", false)
+	b.pressed.connect(func(): continue_pressed.emit())
+	v.add_child(b)
+
+func show_tree(character: Dictionary, branches: Array, owned: Dictionary, points: int, level: int) -> void:
+	for c in tree_box.get_children():
+		c.queue_free()
+	for br in branches:
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 8)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		col.add_child(_label(br.branch.to_upper(), 14, HOT, true))
+		var prev_owned := true
+		for n in br.nodes:
+			var have: bool = owned.has(n.id)
+			var open: bool = not have and prev_owned
+			var tag := "Acquis" if have else ("Version améliorée" if n.get("ult", false) else ("Disponible" if open else "Verrouillé"))
+			var b := _card("", tag, COOL if have else (WARN if open else DIM), n.name, n.desc, [], have, "", not have and not open, 132.0)
+			var id: String = n.id
+			b.pressed.connect(func(): tree_pick.emit(id))
+			col.add_child(b)
+			prev_owned = have
+		tree_box.add_child(col)
+	lbl.tree_points.text = "%d POINT%s À PLACER" % [points, "S" if points > 1 else ""]
+	lbl.tree_sub.text = ("%s · niveau %d" % [character.name, level]).to_upper()
+	show_screen("tree")
+
+func _build_victory() -> void:
+	var v := _screen("victory", 620)
+	lbl.v_sub = _caps("Boss de zone vaincu"); v.add_child(lbl.v_sub)
+	v.add_child(_title("Zone", "nettoyée"))
+	var g := GridContainer.new(); g.columns = 5
+	g.add_theme_constant_override("h_separation", 26)
+	for k in [["v_kills", "Kills"], ["v_rank", "Style max"], ["v_level", "Niveau"], ["v_credits", "Crédits"], ["v_score", "Score"]]:
+		var c := VBoxContainer.new()
+		c.add_child(_caps(k[1]))
+		lbl[k[0]] = _label("0", 22, INK)
+		c.add_child(lbl[k[0]])
+		g.add_child(c)
+	v.add_child(g)
+	var note := _label("La zone 2, la fonderie, arrive bientôt.", 15, DIM, false, true)
+	v.add_child(note)
+	var h := HBoxContainer.new(); h.add_theme_constant_override("separation", 12)
+	var r := _button("Rejouer"); r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	r.pressed.connect(func(): retry_pressed.emit())
+	var m := _button("Menu", false); m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	m.pressed.connect(func(): menu_pressed.emit())
+	h.add_child(r); h.add_child(m)
+	v.add_child(h)
+
+func show_victory(zone_name: String, kills: int, rank: String, score: int, level: int, credits: int) -> void:
+	lbl.v_sub.text = ("Boss de zone vaincu · " + zone_name).to_upper()
+	lbl.v_kills.text = str(kills)
+	lbl.v_rank.text = rank
+	lbl.v_level.text = str(level)
+	lbl.v_credits.text = str(credits)
+	lbl.v_score.text = str(score)
+	show_screen("victory")
 
 func _build_pause() -> void:
 	var v := _screen("pause", 420)
@@ -432,9 +662,10 @@ func _build_over() -> void:
 	var v := _screen("over", 560)
 	v.add_child(_caps("Tu es tombé"))
 	v.add_child(_title("Game", "Over"))
-	var g := GridContainer.new(); g.columns = 4
+	var g := GridContainer.new()
+	g.columns = 5
 	g.add_theme_constant_override("h_separation", 28)
-	for k in [["o_wave", "Vague"], ["o_kills", "Kills"], ["o_rank", "Style max"], ["o_score", "Score"]]:
+	for k in [["o_wave", "Round"], ["o_kills", "Kills"], ["o_rank", "Style max"], ["o_level", "Niveau"], ["o_score", "Score"]]:
 		var c := VBoxContainer.new()
 		c.add_child(_caps(k[1]))
 		lbl[k[0]] = _label("0", 22, INK)
@@ -449,8 +680,9 @@ func _build_over() -> void:
 	h.add_child(r); h.add_child(m)
 	v.add_child(h)
 
-func show_over(wave: int, kills: int, rank: String, score: int) -> void:
-	lbl.o_wave.text = str(wave)
+func show_over(wave: int, kills: int, rank: String, score: int, level: int) -> void:
+	lbl.o_wave.text = "%d / 10" % wave
+	lbl.o_level.text = str(level)
 	lbl.o_kills.text = str(kills)
 	lbl.o_rank.text = rank
 	lbl.o_score.text = str(score)
@@ -459,4 +691,4 @@ func show_over(wave: int, kills: int, rank: String, score: int) -> void:
 func show_screen(name: String) -> void:
 	for k in screens:
 		screens[k].visible = k == name
-	hud.visible = name in ["none", "pause", "augment"]
+	hud.visible = name in ["none", "pause"]

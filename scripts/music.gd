@@ -8,8 +8,11 @@ const TRACKS := {
 	"menu": ["menu.mp3"],
 	"wave": ["wave_1.mp3", "wave_2.mp3", "wave_3.mp3"], # tourne d'une vague à l'autre
 	"boss": ["boss.mp3"],
+	"miniboss": ["miniboss.mp3", "boss.mp3"],         # mini-boss du round 5 : repli sur boss.mp3
+	"shop": ["shop.mp3", "augment.mp3"],
 	"boss2": ["boss_phase2.mp3", "boss.mp3"],           # phase 2 : repli sur boss.mp3
 	"augment": ["augment.mp3"],
+	"victory": ["victory.mp3", "augment.mp3"],
 	"over": ["gameover.mp3"],
 }
 const SHARED := { "menu": true, "over": true } # communs à toutes les zones

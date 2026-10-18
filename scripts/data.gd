@@ -1,9 +1,50 @@
-# Données du jeu : armes, ennemis, boss, rangs de style, augments.
+# Données du jeu : personnages, armes, ennemis, rounds, boss, shop, arbre de compétences, augments.
 # Tout l'équilibrage se règle ici.
 extends RefCounted
 
 const WAVES_PER_ZONE := 10 # 7 zones de 10 rounds (mini boss round 5, boss de zone round 10)
+const SHOP_ROUNDS := [3, 6, 9]
+const MINIBOSS_ROUND := 5
+const BOSS_ROUND := 10
 
+# ---------- Personnages ----------
+# Chaque perso a sa compétence (chargée par le combo), sa liste d'armes et son arbre.
+const CHARACTERS := {
+	"kade": {
+		"id": "kade", "name": "Kade", "title": "Lame du Syndicat",
+		"blurb": "Ancien nettoyeur de la ville-système. Vit pour l'élan et les kills en l'air.",
+		"skill": "Surcharge", "skill_desc": "Le temps ralentit autour de toi : munitions infinies, +50 % de dégâts, +25 % de cadence.",
+		"weapons": ["rifle", "shotgun", "uzi"],
+		"skill_time": 6.0,
+	},
+}
+const CHARACTER_ORDER := ["kade"]
+
+# L'arbre se remplit avec les points de niveau, entre deux rounds. 3 branches, le dernier nœud est la version améliorée.
+const TREE := {
+	"kade": [
+		{ "branch": "Surcharge", "nodes": [
+			{ "id": "s1", "name": "Batterie", "desc": "La jauge de Surcharge se remplit 25 % plus vite" },
+			{ "id": "s2", "name": "Prolongation", "desc": "Surcharge dure 2 s de plus" },
+			{ "id": "s3", "name": "Onde de choc", "desc": "Activer Surcharge souffle et blesse les ennemis proches" },
+			{ "id": "s4", "name": "Surcharge+", "desc": "Chaque kill en Surcharge la prolonge de 0,5 s", "ult": true },
+		] },
+		{ "branch": "Armes", "nodes": [
+			{ "id": "w1", "name": "Calibre", "desc": "+12 % de dégâts" },
+			{ "id": "w2", "name": "Doigts agiles", "desc": "Recharge 15 % plus vite" },
+			{ "id": "w3", "name": "Chargeur piégé", "desc": "Les chargeurs tirés en vol explosent 40 % plus fort" },
+			{ "id": "w4", "name": "Pluie d'acier", "desc": "Un chargeur touché se divise en 3 et frappe 3 ennemis", "ult": true },
+		] },
+		{ "branch": "Mobilité", "nodes": [
+			{ "id": "m1", "name": "Coureur de murs", "desc": "Le wall run dure 50 % plus longtemps" },
+			{ "id": "m2", "name": "Réflexes", "desc": "La roulade se recharge 20 % plus vite" },
+			{ "id": "m3", "name": "Élan", "desc": "+8 % de vitesse, glissade plus puissante" },
+			{ "id": "m4", "name": "Danse murale", "desc": "Un kill en l'air ou sur un mur recharge la roulade et rapporte +50 % de style", "ult": true },
+		] },
+	],
+}
+
+# ---------- Armes ----------
 const WEAPONS := {
 	"rifle": {
 		"id": "rifle", "name": "Fusil d'assaut", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,
@@ -26,18 +67,43 @@ const WEAPONS := {
 }
 const WEAPON_ORDER := ["rifle", "shotgun", "uzi"]
 
+# ---------- Ennemis ----------
+# ai : walk (corps à corps), ranged (tir et garde ses distances), drone (vole et tire), kamikaze (vole et explose),
+# sniper (laser depuis les toits), hacker (brouille le HUD et se téléporte). shield : bouclier frontal.
+# cr : crédits gagnés, xp : expérience.
 const ENEMIES := {
-	"grunt":   { "hp": 24.0,  "speed": 6.5, "dmg": 10.0, "r": 0.5, "h": 1.6, "color": Color("c0392b"), "score": 100 },
-	"runner":  { "hp": 14.0,  "speed": 11.0, "dmg": 7.0, "r": 0.4, "h": 1.1, "color": Color("ffc23d"), "score": 150 },
-	"brute":   { "hp": 130.0, "speed": 4.0, "dmg": 25.0, "r": 0.9, "h": 2.4, "color": Color("8e44ad"), "score": 300 },
-	"spitter": { "hp": 30.0,  "speed": 4.5, "dmg": 8.0, "r": 0.5, "h": 1.8, "color": Color("27ae60"), "score": 200, "ranged": true },
+	"grunt":   { "name": "Grunt", "ai": "walk", "hp": 24.0, "speed": 6.5, "dmg": 10.0, "r": 0.5, "h": 1.6, "color": Color("ff3b3b"), "score": 100, "cr": 4, "xp": 10 },
+	"runner":  { "name": "Runner", "ai": "walk", "hp": 14.0, "speed": 11.0, "dmg": 7.0, "r": 0.4, "h": 1.1, "color": Color("ffc23d"), "score": 150, "cr": 5, "xp": 12 },
+	"brute":   { "name": "Brute", "ai": "walk", "hp": 130.0, "speed": 4.0, "dmg": 25.0, "r": 0.9, "h": 2.4, "color": Color("b25cff"), "score": 300, "cr": 14, "xp": 35 },
+	"spitter": { "name": "Spitter", "ai": "ranged", "hp": 30.0, "speed": 4.5, "dmg": 8.0, "r": 0.5, "h": 1.8, "color": Color("39ff88"), "score": 200, "cr": 7, "xp": 18 },
+	"drone":   { "name": "Drone", "ai": "drone", "hp": 20.0, "speed": 8.0, "dmg": 7.0, "r": 0.5, "h": 0.6, "color": Color("4fc3ff"), "score": 180, "cr": 6, "xp": 15, "fly": true },
+	"shield":  { "name": "Bouclier", "ai": "walk", "hp": 60.0, "speed": 5.0, "dmg": 14.0, "r": 0.6, "h": 1.9, "color": Color("3fd0c9"), "score": 250, "cr": 10, "xp": 25, "shield": true },
+	"hacker":  { "name": "Hacker", "ai": "hacker", "hp": 34.0, "speed": 6.0, "dmg": 6.0, "r": 0.45, "h": 1.7, "color": Color("a6ff00"), "score": 280, "cr": 12, "xp": 28 },
+	"sniper":  { "name": "Sniper", "ai": "sniper", "hp": 40.0, "speed": 0.0, "dmg": 26.0, "r": 0.5, "h": 1.9, "color": Color("ff2d6f"), "score": 320, "cr": 14, "xp": 30 },
+	"pub":     { "name": "Drone pub", "ai": "kamikaze", "hp": 8.0, "speed": 13.0, "dmg": 12.0, "r": 0.35, "h": 0.5, "color": Color("ff4fd8"), "score": 60, "cr": 2, "xp": 5, "fly": true },
 }
 
-const BOSSES := [
-	{ "name": "Le Colosse", "color": Color("ff5a36"), "hp": 2600.0, "speed": 4.2, "r": 2.0, "h": 5.0, "pattern": "slam" },
-	{ "name": "La Nuée", "color": Color("3fd0c9"), "hp": 3200.0, "speed": 5.5, "r": 1.6, "h": 4.0, "pattern": "summon" },
-	{ "name": "L'Ardent", "color": Color("ffc23d"), "hp": 3800.0, "speed": 3.8, "r": 1.8, "h": 4.5, "pattern": "barrage" },
+# ---------- Zones ----------
+# Chaque round : nombre d'ennemis et poids de chaque type. "miniboss" / "boss" : round de boss avec une escorte.
+const ZONES := [
+	{
+		"name": "Ville néon", "rounds": [
+			{ "n": 10, "mix": { "grunt": 1.0 } },
+			{ "n": 14, "mix": { "grunt": 0.65, "runner": 0.35 } },
+			{ "n": 18, "mix": { "grunt": 0.45, "runner": 0.25, "drone": 0.3 } },
+			{ "n": 22, "mix": { "grunt": 0.35, "runner": 0.2, "shield": 0.2, "spitter": 0.25 } },
+			{ "n": 12, "mix": { "grunt": 0.5, "runner": 0.3, "pub": 0.2 }, "special": "miniboss" },
+			{ "n": 26, "mix": { "grunt": 0.3, "runner": 0.2, "shield": 0.15, "hacker": 0.12, "drone": 0.13, "sniper": 0.1 } },
+			{ "n": 30, "mix": { "grunt": 0.25, "runner": 0.2, "shield": 0.12, "hacker": 0.1, "spitter": 0.1, "sniper": 0.08, "pub": 0.15 } },
+			{ "n": 34, "mix": { "grunt": 0.25, "runner": 0.2, "brute": 0.07, "shield": 0.12, "hacker": 0.08, "drone": 0.1, "sniper": 0.08, "pub": 0.1 } },
+			{ "n": 38, "mix": { "grunt": 0.2, "runner": 0.2, "brute": 0.08, "shield": 0.12, "hacker": 0.1, "drone": 0.1, "spitter": 0.08, "sniper": 0.07, "pub": 0.05 } },
+			{ "n": 14, "mix": { "grunt": 0.4, "runner": 0.4, "drone": 0.2 }, "special": "boss" },
+		],
+		"miniboss": { "name": "Le Brouilleur", "color": Color("a6ff00"), "hp": 1500.0, "speed": 5.0, "r": 1.3, "h": 4.0, "pattern": "glitch", "score": 3000, "cr": 80, "xp": 150 },
+		"boss": { "name": "Titan Néon", "color": Color("ff2d6f"), "hp": 4600.0, "speed": 4.0, "r": 2.2, "h": 6.0, "pattern": "titan", "score": 8000, "cr": 150, "xp": 300 },
+	},
 ]
+const MAX_SNIPERS := 3
 
 # [nom, style minimum, multiplicateur de score]
 const RANKS := [["D", 0, 1.0], ["C", 80, 1.2], ["B", 200, 1.5], ["A", 380, 1.8], ["S", 620, 2.2], ["SS", 900, 2.6], ["SSS", 1250, 3.0]]
@@ -45,8 +111,26 @@ const RANKS := [["D", 0, 1.0], ["C", 80, 1.2], ["B", 200, 1.5], ["A", 380, 1.8],
 const BASE_UP := {
 	"speed": 1.0, "max_hp": 100.0, "lifesteal": 0.0, "roll_cd": 1.0, "jumps": 2, "pierce": 0, "crit": 2.0,
 	"explode": 0, "regen": 0.0, "last_shots": 0, "recoil_jump": 0, "ricochet": 0, "air_dmg": 0,
-	"slide_boost": 1.0, "style_mult": 1.0, "mag_boom": 1.0,
+	"slide_boost": 1.0, "style_mult": 1.0, "mag_boom": 1.0, "wallrun": 1.0, "skill_gain": 1.0, "skill_time": 0.0, "credit_mult": 1.0,
 }
+
+# ---------- XP ----------
+static func xp_for_level(lvl: int) -> int:
+	return 80 + 50 * (lvl - 1)
+
+# ---------- Shop ----------
+const MODS := [
+	{ "id": "mod_barrel", "name": "Canon long", "desc": "Dispersion réduite de 30 %", "price": 90 },
+	{ "id": "mod_trigger", "name": "Détente sèche", "desc": "+12 % de cadence de tir", "price": 110 },
+	{ "id": "mod_bolt", "name": "Culasse rapide", "desc": "Recharge 20 % plus vite", "price": 90 },
+	{ "id": "mod_ext", "name": "Grande capacité", "desc": "+25 % de balles par chargeur", "price": 100 },
+]
+const HEALS := [
+	{ "id": "heal_s", "name": "Stim", "desc": "+40 santé", "price": 45 },
+	{ "id": "heal_l", "name": "Soin complet", "desc": "Santé au maximum", "price": 100 },
+]
+const AUG_PRICE := 110
+const UPGRADE_PRICE := 140
 
 # "weapon" vide = augment commun. L'effet de chaque id est appliqué dans main.gd (apply_augment).
 const AUGMENTS := [
@@ -63,6 +147,7 @@ const AUGMENTS := [
 	{ "id": "leech", "name": "Vampirisme", "desc": "+3 santé à chaque ennemi tué", "tag": "Survie" },
 	{ "id": "regen", "name": "Nanites", "desc": "Régénère 1,5 santé par seconde", "tag": "Survie" },
 	{ "id": "boom", "name": "Charges instables", "desc": "Les ennemis explosent en mourant et blessent leurs voisins", "tag": "Chaos" },
+	{ "id": "greed", "name": "Prime de combo", "desc": "+30 % de crédits gagnés", "tag": "Économie", "max": 2 },
 	{ "id": "r_pierce", "weapon": "rifle", "name": "Balles perforantes", "desc": "Les balles traversent un ennemi de plus", "max": 3 },
 	{ "id": "r_lynx", "weapon": "rifle", "name": "Œil de lynx", "desc": "Tirs à la tête : +100 % de dégâts en plus", "max": 3 },
 	{ "id": "r_last", "weapon": "rifle", "name": "Dernières balles", "desc": "Les 5 dernières balles du chargeur font double dégâts", "max": 2 },
