@@ -4,6 +4,7 @@
 extends CharacterBody3D
 
 const ThrownMag = preload("res://scripts/thrown_mag.gd")
+const M = preload("res://scripts/data.gd").MOVE
 const ROLL_DUR := 0.38
 const SENS := 0.0022
 const JOY_SENS := 3.2
@@ -44,6 +45,7 @@ var wallrun_cd := 0.0
 var wall_n := Vector3.ZERO
 var skill := 0.0         # jauge de compétence, 0 à 100
 var look_acc := Vector2.ZERO
+var sway := Vector2.ZERO   # l'arme traîne derrière le regard
 var forced_intent := {}  # rempli par le test auto (et plus tard par le réseau)
 var intent := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
 
@@ -72,6 +74,13 @@ func _ready() -> void:
 	flash.omni_range = 6.0
 	flash.light_color = Color(1.0, 0.67, 0.33)
 	rig.add_child(flash)
+	# lumière d'appoint froide, courte portée : éclaire l'arme, presque pas le décor
+	var fill := OmniLight3D.new()
+	fill.light_energy = 0.9
+	fill.omni_range = 1.2
+	fill.light_color = Color(0.75, 0.82, 1.0)
+	fill.position = Vector3(0.1, 0.35, 0.15)
+	rig.add_child(fill)
 
 func eye_position() -> Vector3:
 	return cam.global_position
@@ -95,11 +104,21 @@ func reset(weapon: Dictionary) -> void:
 	global_position = Vector3(0, 0.1, 16)
 	_build_guns()
 
-func _mat(c: Color, emissive := false) -> StandardMaterial3D:
+func _mat(c: Color, emissive := false, metal := 0.0, rough := 0.6) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = c
+	m.metallic = metal
+	m.roughness = rough
 	if emissive:
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	else:
+		# liseré + légère auto-émission : l'arme reste lisible dans la nuit
+		m.rim_enabled = true
+		m.rim = 0.6
+		m.rim_tint = 0.3
+		m.emission_enabled = true
+		m.emission = c.lightened(0.2)
+		m.emission_energy_multiplier = 0.25
 	return m
 
 func _box(parent: Node3D, size: Vector3, m: Material, pos := Vector3.ZERO) -> MeshInstance3D:
@@ -117,9 +136,12 @@ func _build_guns() -> void:
 	for G in guns:
 		G.g.queue_free()
 	guns.clear()
-	var body := _mat(Color("323c48"))
-	var dark := _mat(Color("1b222b"))
+	# métal sombre, grip caoutchouc, liserés lumineux à la couleur de l'arme
+	var body := _mat(Color("6a7688"), false, 0.45, 0.35)
+	var dark := _mat(Color("3a4250"), false, 0.35, 0.45)
+	var grip := _mat(Color("262a32"), false, 0.0, 0.8)
 	var trim := _mat(W.color, true)
+	var hot := _mat(Color("ffffff"), true)
 	var sides := [1.0, -1.0] if W.id == "uzi" else [1.0]
 	for side in sides:
 		var g := Node3D.new()
@@ -129,38 +151,96 @@ func _build_guns() -> void:
 		var extra: MeshInstance3D = null
 		match W.id:
 			"rifle":
-				_box(g, Vector3(0.07, 0.09, 0.55), body)
-				_box(g, Vector3(0.06, 0.11, 0.16), body, Vector3(0, -0.01, 0.3))
-				_box(g, Vector3(0.03, 0.03, 0.2), dark, Vector3(0, 0.01, -0.36))
-				_box(g, Vector3(0.075, 0.02, 0.3), trim, Vector3(0, 0.05, -0.05))
-				mag = _box(g, Vector3(0.05, 0.16, 0.08), dark, Vector3(0, -0.12, -0.08))
+				_box(g, Vector3(0.08, 0.1, 0.5), body)
+				_box(g, Vector3(0.05, 0.02, 0.44), dark, Vector3(0, 0.06, -0.02))
+				_box(g, Vector3(0.086, 0.086, 0.26), dark, Vector3(0, -0.005, -0.33))
+				for k in 3:
+					_box(g, Vector3(0.09, 0.014, 0.04), trim, Vector3(0, 0.0, -0.25 - k * 0.07))
+				_box(g, Vector3(0.03, 0.03, 0.22), dark, Vector3(0, 0.01, -0.56))
+				_box(g, Vector3(0.05, 0.05, 0.07), body, Vector3(0, 0.01, -0.68))
+				_box(g, Vector3(0.06, 0.09, 0.2), body, Vector3(0, -0.01, 0.33))
+				_box(g, Vector3(0.066, 0.13, 0.04), grip, Vector3(0, -0.03, 0.44))
+				var gr := _box(g, Vector3(0.045, 0.11, 0.05), grip, Vector3(0, -0.09, 0.12))
+				gr.rotation.x = 0.3
+				# lunette holographique
+				_box(g, Vector3(0.05, 0.05, 0.15), dark, Vector3(0, 0.1, -0.02))
+				_box(g, Vector3(0.04, 0.04, 0.01), trim, Vector3(0, 0.1, -0.1))
+				_box(g, Vector3(0.012, 0.012, 0.01), hot, Vector3(0, 0.1, 0.056))
+				_box(g, Vector3(0.082, 0.012, 0.28), trim, Vector3(0, 0.025, 0.08))
+				mag = _box(g, Vector3(0.05, 0.17, 0.08), dark, Vector3(0, -0.13, -0.1))
+				_box(mag, Vector3(0.052, 0.07, 0.02), trim, Vector3(0, -0.02, -0.03))
 				mag.rotation.x = 0.15
-				muzzle_z = -0.47
+				muzzle_z = -0.72
 			"shotgun":
-				_box(g, Vector3(0.1, 0.11, 0.42), body, Vector3(0, 0, 0.05))
-				_box(g, Vector3(0.05, 0.05, 0.36), dark, Vector3(0, 0.02, -0.33))
-				_box(g, Vector3(0.105, 0.02, 0.28), trim, Vector3(0, 0.065, 0))
-				extra = _box(g, Vector3(0.08, 0.07, 0.16), dark, Vector3(0, -0.04, -0.33)) # pompe
-				mag = _box(g, Vector3(0.09, 0.045, 0.13), _mat(Color("8a2a1a")), Vector3(0, -0.075, 0.08)) # cartouchière
-				muzzle_z = -0.52
+				_box(g, Vector3(0.1, 0.12, 0.36), body, Vector3(0, 0, 0.02))
+				for x in [-0.022, 0.022]:
+					_box(g, Vector3(0.036, 0.036, 0.52), dark, Vector3(x, 0.025, -0.4))
+				_box(g, Vector3(0.02, 0.012, 0.52), trim, Vector3(0, 0.05, -0.4))
+				extra = _box(g, Vector3(0.09, 0.075, 0.18), grip, Vector3(0, -0.035, -0.33)) # pompe
+				for k in 3:
+					_box(extra, Vector3(0.094, 0.01, 0.02), trim, Vector3(0, 0.0, -0.06 + k * 0.06))
+				var st := _box(g, Vector3(0.08, 0.1, 0.24), body, Vector3(0, -0.03, 0.32))
+				st.rotation.x = -0.12
+				_box(g, Vector3(0.085, 0.12, 0.03), grip, Vector3(0, -0.05, 0.45))
+				# cartouches de rechange sur le flanc
+				for k in 4:
+					_box(g, Vector3(0.02, 0.026, 0.055), _mat(Color("ffb000"), true), Vector3(0.058, 0.02, -0.06 + k * 0.045))
+				_box(g, Vector3(0.105, 0.016, 0.26), trim, Vector3(0, 0.068, 0.0))
+				mag = _box(g, Vector3(0.09, 0.045, 0.13), _mat(Color("8a2a1a"), false, 0.2, 0.7), Vector3(0, -0.075, 0.08)) # cartouchière
+				muzzle_z = -0.68
 			_:
-				_box(g, Vector3(0.06, 0.1, 0.26), body)
-				_box(g, Vector3(0.025, 0.025, 0.08), dark, Vector3(0, 0.02, -0.17))
-				_box(g, Vector3(0.065, 0.02, 0.16), trim, Vector3(0, 0.055, -0.02))
-				mag = _box(g, Vector3(0.04, 0.18, 0.05), dark, Vector3(0, -0.13, 0.03))
-				muzzle_z = -0.22
+				_box(g, Vector3(0.065, 0.1, 0.26), body)
+				_box(g, Vector3(0.03, 0.02, 0.22), dark, Vector3(0, 0.06, 0))
+				_box(g, Vector3(0.01, 0.03, 0.01), trim, Vector3(0, 0.08, -0.1))
+				_box(g, Vector3(0.028, 0.028, 0.1), dark, Vector3(0, 0.02, -0.17))
+				for k in 3:
+					_box(g, Vector3(0.068, 0.012, 0.025), trim, Vector3(0, 0.0, -0.08 + k * 0.05))
+				_box(g, Vector3(0.012, 0.012, 0.2), dark, Vector3(0.035 * side, -0.03, 0.17))
+				_box(g, Vector3(0.067, 0.016, 0.16), trim, Vector3(0, 0.054, -0.02))
+				mag = _box(g, Vector3(0.042, 0.2, 0.05), grip, Vector3(0, -0.14, 0.03))
+				_box(mag, Vector3(0.044, 0.08, 0.012), trim, Vector3(0, -0.04, -0.02))
+				muzzle_z = -0.23
+		# flash de bouche : boule + étoile
 		var fm := MeshInstance3D.new()
 		var sm := SphereMesh.new()
-		sm.radius = 0.035 if W.id == "uzi" else 0.05
+		sm.radius = 0.05 if W.id == "uzi" else 0.075
 		sm.height = sm.radius * 2.0
 		fm.mesh = sm
 		fm.material_override = _mat(Color("ffd28a"), true)
 		fm.position = Vector3(0, 0.01, muzzle_z)
 		fm.visible = false
 		g.add_child(fm)
+		for k in 2:
+			var sp := _box(fm, Vector3(0.018, 0.018, 0.22 if W.id != "uzi" else 0.14), fm.material_override, Vector3.ZERO)
+			sp.rotation = Vector3(0, 0, k * PI / 2) + Vector3(0.4 * (k * 2 - 1), 0.4, 0)
 		var bx: float = 0.2 * side if W.id == "uzi" else (0.24 if W.id == "shotgun" else 0.22)
 		guns.append({ "g": g, "mag": mag, "mag_home": mag.position, "muzzle": Vector3(0, 0.01, muzzle_z), "fm": fm, "fm_t": 0.0,
 			"kick": 0.0, "side": side, "bx": bx, "extra": extra, "ejected": false, "back": false })
+
+func _eject_casing(G: Dictionary) -> void:
+	# douille éjectée sur le côté
+	var p := CPUParticles3D.new()
+	p.one_shot = true
+	p.emitting = false
+	p.amount = 1
+	p.lifetime = 0.7
+	p.local_coords = false
+	p.direction = Vector3(1, 1.2, 0.2)
+	p.spread = 15.0
+	p.initial_velocity_min = 2.5
+	p.initial_velocity_max = 3.5
+	p.gravity = Vector3(0, -14, 0)
+	p.angular_velocity_min = 400.0
+	p.angular_velocity_max = 700.0
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.012, 0.012, 0.03) if W.id != "shotgun" else Vector3(0.022, 0.022, 0.05)
+	bm.material = _mat(Color("d9a441") if W.id != "shotgun" else Color("c0392b"), false, 0.9, 0.3)
+	p.mesh = bm
+	game.world.add_child(p)
+	p.global_transform = G.g.global_transform
+	p.global_position = G.g.to_global(Vector3(0.05 * G.side, 0.04, -0.05))
+	p.emitting = true
+	p.finished.connect(p.queue_free)
 
 # ---------- Entrées ----------
 func _unhandled_input(event: InputEvent) -> void:
@@ -199,7 +279,7 @@ func jump() -> void:
 		var along := Vector3(velocity.x, 0, velocity.z)
 		along -= n * along.dot(n)
 		velocity = along * 1.05 + n * 8.5
-		velocity.y = 8.5
+		velocity.y = M.jump
 		wallrun_t = 0.0
 		wallrun_cd = 0.35
 		jumps = 1
@@ -211,14 +291,14 @@ func jump() -> void:
 		slide_t = 0.0
 		velocity.x *= 1.1
 		velocity.z *= 1.1
-		velocity.y = 8.5
+		velocity.y = M.jump
 		jumps = 1
 		return
 	if is_on_floor():
-		velocity.y = 8.5
+		velocity.y = M.jump
 		jumps = 1
 	elif jumps < game.up.jumps:
-		velocity.y = 7.5
+		velocity.y = M.air_jump
 		jumps = maxi(jumps, 1) + 1
 
 func roll() -> void:
@@ -276,6 +356,7 @@ func simulate(it: Dictionary, delta: float) -> void:
 	roll_grace = maxf(0.0, roll_grace - delta)
 	if game.up.regen > 0.0 and hp < game.up.max_hp:
 		hp = minf(game.up.max_hp, hp + game.up.regen * delta)
+	sway = sway.lerp(Vector2(clampf(it.look.x * 6.0, -0.08, 0.08), clampf(it.look.y * 6.0, -0.06, 0.06)), minf(1.0, 14.0 * delta))
 	yaw -= it.look.x
 	pitch = clampf(pitch - it.look.y, -1.5, 1.5)
 
@@ -316,12 +397,13 @@ func simulate(it: Dictionary, delta: float) -> void:
 	elif wallrun_t > 0.0:
 		_wallrun_step(delta)
 	else:
-		var accel := 14.0 if is_on_floor() else 4.0
-		var spd: float = 10.5 * game.up.speed * (1.15 if game.skill_t > 0.0 else 1.0)
-		velocity.x += (wish.x * spd - velocity.x) * minf(1.0, accel * delta)
-		velocity.z += (wish.z * spd - velocity.z) * minf(1.0, accel * delta)
+		var spd: float = M.speed * game.up.speed * (1.15 if game.skill_t > 0.0 else 1.0)
+		if is_on_floor():
+			_ground_move(wish, spd, delta)
+		else:
+			_air_move(wish, spd, delta)
 	if wallrun_t <= 0.0:
-		velocity.y -= 24.0 * delta
+		velocity.y -= M.gravity * delta
 	move_and_slide()
 	_check_wallrun(it)
 	if is_on_floor():
@@ -331,6 +413,32 @@ func simulate(it: Dictionary, delta: float) -> void:
 	if global_position.y < -4.0:
 		game.player_fell()
 	_update_camera(delta, wish)
+
+# ---------- Élan ----------
+func _ground_move(wish: Vector3, spd: float, delta: float) -> void:
+	# accélération franche, freinage doux, et la vitesse en trop (glissade, jump pad, saut) s'use lentement
+	var hv := Vector3(velocity.x, 0, velocity.z)
+	var cur := hv.length()
+	if wish.length() > 0.1:
+		var keep := spd if cur <= spd else move_toward(cur, spd, 7.0 * delta)
+		hv = hv.lerp(wish * keep, minf(1.0, M.accel * delta * 0.65))
+		if cur > spd:
+			hv = hv.normalized() * maxf(hv.length(), keep * 0.98)
+	else:
+		hv = hv.lerp(Vector3.ZERO, minf(1.0, M.friction * delta))
+	velocity.x = hv.x
+	velocity.z = hv.z
+
+func _air_move(wish: Vector3, spd: float, delta: float) -> void:
+	# en l'air on garde son élan et on peut le diriger, sans gagner de vitesse gratuite
+	var hv := Vector3(velocity.x, 0, velocity.z)
+	var cap := maxf(hv.length(), spd)
+	hv += wish * spd * M.air_accel * delta
+	if hv.length() > cap:
+		hv = hv.normalized() * cap
+	hv *= 1.0 - M.air_drag * delta
+	velocity.x = hv.x
+	velocity.z = hv.z
 
 # ---------- Wall run ----------
 static func _flat(n: Vector3) -> Vector3:
@@ -383,7 +491,7 @@ func _wallrun_step(delta: float) -> void:
 	if along.length() < 2.0:
 		_end_wallrun()
 		return
-	along = along.normalized() * maxf(along.length(), 10.5 * game.up.speed)
+	along = along.normalized() * maxf(along.length(), M.speed * game.up.speed)
 	velocity.x = along.x - wall_n.x * 3.0
 	velocity.z = along.z - wall_n.z * 3.0
 	velocity.y = maxf(velocity.y - 5.0 * delta, -1.2)
@@ -442,8 +550,9 @@ func _update_camera(delta: float, wish: Vector3) -> void:
 			if G.fm_t <= 0.0:
 				G.fm.visible = false
 		var ra := _animate_reload(G, p) if p >= 0.0 else { "y": 0.0, "rx": 0.0, "rz": 0.0 }
-		G.g.position = Vector3(G.bx + cos(bob * 0.5) * 0.01, -0.2 + absf(sin(bob * 0.5)) * 0.012 - G.kick * 0.02 + ra.y, -0.45 + G.kick * 0.06)
-		G.g.rotation = Vector3(G.kick * 0.15 + ra.rx, 0.0, ra.rz)
+		var strafe: float = intent.move.x
+		G.g.position = Vector3(G.bx + cos(bob * 0.5) * 0.01 - sway.x * 0.5, -0.2 + absf(sin(bob * 0.5)) * 0.012 - G.kick * 0.02 + ra.y + sway.y * 0.5, -0.45 + G.kick * 0.06)
+		G.g.rotation = Vector3(G.kick * 0.15 + ra.rx + sway.y, sway.x * 1.5, ra.rz - strafe * 0.05)
 	flash.light_energy = maxf(0.0, flash.light_energy - delta * 40.0)
 
 static func _ease(t: float) -> float:
@@ -538,6 +647,8 @@ func shoot() -> void:
 	shot_count += 1
 	var G: Dictionary = guns[shot_count % guns.size()]
 	G.kick = 1.0
+	G.fm.rotation.z = randf() * TAU
+	_eject_casing(G)
 	G.fm.visible = true
 	G.fm_t = 0.04
 	flash.position = G.g.position + G.muzzle

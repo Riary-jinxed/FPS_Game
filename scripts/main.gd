@@ -1158,8 +1158,15 @@ func _drain_between(tag: String) -> void:
 		await _wait(0.2)
 
 func _showcase() -> void:
-	# captures des ennemis et des boss, figés devant la caméra
+	# captures des armes, puis des ennemis et des boss figés devant la caméra
 	await _wait(1.0)
+	for w in Data.WEAPON_ORDER:
+		start_with(w)
+		_clear_round()
+		player.global_position = Vector3(-30, 0.1, 10)
+		player.yaw = -PI / 2
+		await _wait(0.4)
+		await _shot("gun_" + w)
 	start_with("rifle")
 	await _wait(0.2)
 	_clear_round()

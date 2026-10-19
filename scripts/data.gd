@@ -67,20 +67,28 @@ const WEAPONS := {
 }
 const WEAPON_ORDER := ["rifle", "shotgun", "uzi"]
 
+# ---------- Déplacement ----------
+# Réglages du mouvement : accélération forte, freinage doux et élan conservé en l'air.
+const MOVE := {
+	"speed": 12.0, "accel": 16.0, "friction": 5.0, "air_accel": 7.0, "air_drag": 0.15,
+	"gravity": 22.0, "jump": 9.5, "air_jump": 8.5, "bhop_keep": 0.97,
+}
+
 # ---------- Ennemis ----------
+# Couleurs chaudes et saturées (rouge, orange, ambre, magenta, lime) : le décor est froid pour qu'ils ressortent.
 # ai : walk (corps à corps), ranged (tir et garde ses distances), drone (vole et tire), kamikaze (vole et explose),
 # sniper (laser depuis les toits), hacker (brouille le HUD et se téléporte). shield : bouclier frontal.
 # cr : crédits gagnés, xp : expérience.
 const ENEMIES := {
-	"grunt":   { "name": "Grunt", "ai": "walk", "hp": 24.0, "speed": 6.5, "dmg": 10.0, "r": 0.5, "h": 1.6, "color": Color("ff3b3b"), "score": 100, "cr": 4, "xp": 10 },
-	"runner":  { "name": "Runner", "ai": "walk", "hp": 14.0, "speed": 11.0, "dmg": 7.0, "r": 0.4, "h": 1.1, "color": Color("ffc23d"), "score": 150, "cr": 5, "xp": 12 },
-	"brute":   { "name": "Brute", "ai": "walk", "hp": 130.0, "speed": 4.0, "dmg": 25.0, "r": 0.9, "h": 2.4, "color": Color("b25cff"), "score": 300, "cr": 14, "xp": 35 },
-	"spitter": { "name": "Spitter", "ai": "ranged", "hp": 30.0, "speed": 4.5, "dmg": 8.0, "r": 0.5, "h": 1.8, "color": Color("39ff88"), "score": 200, "cr": 7, "xp": 18 },
-	"drone":   { "name": "Drone", "ai": "drone", "hp": 20.0, "speed": 8.0, "dmg": 7.0, "r": 0.5, "h": 0.6, "color": Color("4fc3ff"), "score": 180, "cr": 6, "xp": 15, "fly": true },
-	"shield":  { "name": "Bouclier", "ai": "walk", "hp": 60.0, "speed": 5.0, "dmg": 14.0, "r": 0.6, "h": 1.9, "color": Color("3fd0c9"), "score": 250, "cr": 10, "xp": 25, "shield": true },
-	"hacker":  { "name": "Hacker", "ai": "hacker", "hp": 34.0, "speed": 6.0, "dmg": 6.0, "r": 0.45, "h": 1.7, "color": Color("a6ff00"), "score": 280, "cr": 12, "xp": 28 },
-	"sniper":  { "name": "Sniper", "ai": "sniper", "hp": 40.0, "speed": 0.0, "dmg": 26.0, "r": 0.5, "h": 1.9, "color": Color("ff2d6f"), "score": 320, "cr": 14, "xp": 30 },
-	"pub":     { "name": "Drone pub", "ai": "kamikaze", "hp": 8.0, "speed": 13.0, "dmg": 12.0, "r": 0.35, "h": 0.5, "color": Color("ff4fd8"), "score": 60, "cr": 2, "xp": 5, "fly": true },
+	"grunt":   { "name": "Grunt", "ai": "walk", "hp": 24.0, "speed": 6.5, "dmg": 10.0, "r": 0.5, "h": 1.6, "color": Color("ff3b30"), "score": 100, "cr": 4, "xp": 10 },
+	"runner":  { "name": "Runner", "ai": "walk", "hp": 14.0, "speed": 11.0, "dmg": 7.0, "r": 0.4, "h": 1.1, "color": Color("ffb000"), "score": 150, "cr": 5, "xp": 12 },
+	"brute":   { "name": "Brute", "ai": "walk", "hp": 130.0, "speed": 4.0, "dmg": 25.0, "r": 0.9, "h": 2.4, "color": Color("ff6b1a"), "score": 300, "cr": 14, "xp": 35 },
+	"spitter": { "name": "Spitter", "ai": "ranged", "hp": 30.0, "speed": 4.5, "dmg": 8.0, "r": 0.5, "h": 1.8, "color": Color("c6ff1a"), "score": 200, "cr": 7, "xp": 18 },
+	"drone":   { "name": "Drone", "ai": "drone", "hp": 20.0, "speed": 8.0, "dmg": 7.0, "r": 0.5, "h": 0.6, "color": Color("ff4060"), "score": 180, "cr": 6, "xp": 15, "fly": true },
+	"shield":  { "name": "Bouclier", "ai": "walk", "hp": 60.0, "speed": 5.0, "dmg": 14.0, "r": 0.6, "h": 1.9, "color": Color("ffd23f"), "score": 250, "cr": 10, "xp": 25, "shield": true },
+	"hacker":  { "name": "Hacker", "ai": "hacker", "hp": 34.0, "speed": 6.0, "dmg": 6.0, "r": 0.45, "h": 1.7, "color": Color("ff3cf0"), "score": 280, "cr": 12, "xp": 28 },
+	"sniper":  { "name": "Sniper", "ai": "sniper", "hp": 40.0, "speed": 0.0, "dmg": 26.0, "r": 0.5, "h": 1.9, "color": Color("ff1f3d"), "score": 320, "cr": 14, "xp": 30 },
+	"pub":     { "name": "Drone pub", "ai": "kamikaze", "hp": 8.0, "speed": 13.0, "dmg": 12.0, "r": 0.35, "h": 0.5, "color": Color("ff8a3d"), "score": 60, "cr": 2, "xp": 5, "fly": true },
 }
 
 # ---------- Zones ----------
@@ -99,8 +107,8 @@ const ZONES := [
 			{ "n": 38, "mix": { "grunt": 0.2, "runner": 0.2, "brute": 0.08, "shield": 0.12, "hacker": 0.1, "drone": 0.1, "spitter": 0.08, "sniper": 0.07, "pub": 0.05 } },
 			{ "n": 14, "mix": { "grunt": 0.4, "runner": 0.4, "drone": 0.2 }, "special": "boss" },
 		],
-		"miniboss": { "name": "Le Brouilleur", "color": Color("a6ff00"), "hp": 1500.0, "speed": 5.0, "r": 1.3, "h": 4.0, "pattern": "glitch", "score": 3000, "cr": 80, "xp": 150 },
-		"boss": { "name": "Titan Néon", "color": Color("ff2d6f"), "hp": 4600.0, "speed": 4.0, "r": 2.2, "h": 6.0, "pattern": "titan", "score": 8000, "cr": 150, "xp": 300 },
+		"miniboss": { "name": "Le Brouilleur", "color": Color("ff3cf0"), "hp": 1500.0, "speed": 5.0, "r": 1.3, "h": 4.0, "pattern": "glitch", "score": 3000, "cr": 80, "xp": 150 },
+		"boss": { "name": "Titan Néon", "color": Color("ff3b30"), "hp": 4600.0, "speed": 4.0, "r": 2.2, "h": 6.0, "pattern": "titan", "score": 8000, "cr": 150, "xp": 300 },
 	},
 ]
 const MAX_SNIPERS := 3

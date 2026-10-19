@@ -1,5 +1,7 @@
 # Arène de la zone 1 : place de la ville néon. Murs de buildings pour le wall run, tours de snipers,
 # plateformes, jump pads, et une dalle centrale qui s'effondre pendant la phase 2 du boss.
+# Palette du décor volontairement froide (cyan, bleu, violet) : les couleurs chaudes sont réservées
+# aux ennemis et à leurs tirs, pour qu'ils ressortent du décor.
 extends Node3D
 
 const HALF := 40.0
@@ -41,7 +43,7 @@ func _process(_delta: float) -> void:
 func _window_texture() -> ImageTexture:
 	var img := Image.create(128, 512, false, Image.FORMAT_RGB8)
 	img.fill(Color("080a12"))
-	var palette := [Color("ffd9a0"), Color("ffb36b"), Color("9fd8ff"), Color("ff7ad9"), Color("6bfff0")]
+	var palette := [Color("c9d6ff"), Color("8fb0ff"), Color("9fd8ff"), Color("b9a6ff"), Color("6bfff0")]
 	for row in 16:
 		for col in 8:
 			if _rng.randf() < 0.38:
@@ -65,8 +67,8 @@ func _grate_texture() -> ImageTexture:
 	img.fill(Color("161a24"))
 	for i in 64:
 		for w in 2:
-			img.set_pixel(i, w, Color("ff2d6f"))
-			img.set_pixel(w, i, Color("ff2d6f"))
+			img.set_pixel(i, w, Color("8a5cff"))
+			img.set_pixel(w, i, Color("8a5cff"))
 	for i in range(8, 64, 8):
 		for j in 64:
 			img.set_pixel(i, j, Color("0e1118"))
@@ -89,7 +91,7 @@ func _building_mat() -> StandardMaterial3D:
 	m.albedo_texture = _win_tex
 	m.emission_enabled = true
 	m.emission_texture = _win_tex
-	m.emission_energy_multiplier = 1.4
+	m.emission_energy_multiplier = 1.0
 	m.uv1_triplanar = true
 	m.uv1_world_triplanar = true
 	m.uv1_scale = Vector3.ONE * (1.0 / 12.8)
@@ -184,7 +186,7 @@ func _build_floor() -> void:
 		_box(Vector3(0, 0.01, z), Vector3(PLAZA * 2 + 0.8, 0.02, 0.15), lane, false)
 	for x in [-PLAZA - 0.4, PLAZA + 0.4]:
 		_box(Vector3(x, 0.01, 0), Vector3(0.15, 0.02, PLAZA * 2 + 0.8), lane, false)
-	var dash := _neon(Color("ffc23d"), 1.2)
+	var dash := _neon(Color("4f7cff"), 1.2)
 	for i in range(-36, 37, 6):
 		if absf(i) > PLAZA + 1:
 			_box(Vector3(i, 0.01, 0), Vector3(3.0, 0.02, 0.2), dash, false)
@@ -192,9 +194,9 @@ func _build_floor() -> void:
 	_build_tiles()
 	# fosse lumineuse sous la dalle
 	var pit := StandardMaterial3D.new()
-	pit.albedo_color = Color("ff2d6f")
+	pit.albedo_color = Color("8a5cff")
 	pit.emission_enabled = true
-	pit.emission = Color("ff2d6f")
+	pit.emission = Color("8a5cff")
 	pit.emission_energy_multiplier = 2.5
 	_box(Vector3(0, PIT_Y, 0), Vector3(PLAZA * 2, 0.5, PLAZA * 2), pit, false)
 	for s in [-1.0, 1.0]:
@@ -206,7 +208,7 @@ func _build_perimeter() -> void:
 	# une rangée continue de buildings : leurs façades forment les murs de l'arène (bons pour le wall run)
 	var bmat := _building_mat()
 	var words := ["NEO//CORP", "OPEN 24H", "SYSTÈME OK", "HORDE", "飲む", "BUY NOW", "ゲーム", "NOODLE", "ZONE 01", "CYBER BAR"]
-	var colors := [Color("ff2d6f"), Color("3fd0c9"), Color("ffc23d"), Color("b25cff"), Color("4fc3ff"), Color("ff4fd8")]
+	var colors := [Color("8a5cff"), Color("3fd0c9"), Color("4f7cff"), Color("6a4cff"), Color("4fc3ff"), Color("b98cff")]
 	var k := 0
 	for side in 4:
 		var x := -HALF
@@ -263,12 +265,12 @@ func _build_skyline() -> void:
 		var p := Vector3(cos(a) * d, h / 2, sin(a) * d)
 		_box(p, Vector3(w, h, w), bmat, false)
 		if i % 3 == 0:
-			_box(p + Vector3(0, h / 2 + 2.0, 0), Vector3(0.3, 4.0, 0.3), _neon(Color("ff2d6f"), 5.0, true), false)
+			_box(p + Vector3(0, h / 2 + 2.0, 0), Vector3(0.3, 4.0, 0.3), _neon(Color("8a5cff"), 5.0, true), false)
 
 # ---------- Intérieur ----------
 func _build_interior() -> void:
 	var conc := _concrete()
-	var colors := [Color("ff2d6f"), Color("3fd0c9"), Color("ffc23d"), Color("b25cff")]
+	var colors := [Color("8a5cff"), Color("3fd0c9"), Color("4f7cff"), Color("6a4cff")]
 	# tours de snipers aux quatre coins, avec un jump pad devant chacune
 	var i := 0
 	for c in [Vector2(-30, -30), Vector2(30, -30), Vector2(-30, 30), Vector2(30, 30)]:
@@ -281,8 +283,8 @@ func _build_interior() -> void:
 		_add_pad(pad_pos, (Vector3(c.x, 0, c.y) - pad_pos).normalized() * 6.0, 21.0)
 		i += 1
 	# panneaux publicitaires géants : murs de wall run
-	var ads := [[Vector3(0, 0, -21), 0.0, "NEO//CORP", Color("ff2d6f"), Color("3fd0c9")], [Vector3(0, 0, 21), PI, "UPGRADE YOU", Color("3fd0c9"), Color("b25cff")],
-			[Vector3(-17, 0, 0), PI / 2, "ゲーム", Color("ffc23d"), Color("ff2d6f")], [Vector3(17, 0, 0), -PI / 2, "BUY NOW", Color("b25cff"), Color("4fc3ff")]]
+	var ads := [[Vector3(0, 0, -21), 0.0, "NEO//CORP", Color("8a5cff"), Color("3fd0c9")], [Vector3(0, 0, 21), PI, "UPGRADE YOU", Color("3fd0c9"), Color("6a4cff")],
+			[Vector3(-17, 0, 0), PI / 2, "ゲーム", Color("4f7cff"), Color("8a5cff")], [Vector3(17, 0, 0), -PI / 2, "BUY NOW", Color("6a4cff"), Color("4fc3ff")]]
 	for ad in ads:
 		_ad_wall(ad[0], ad[1], ad[2], ad[3], ad[4])
 	# plateformes surélevées avec rampe
@@ -295,7 +297,7 @@ func _build_interior() -> void:
 	# couverts
 	for c in [Vector3(-16, 0, -30), Vector3(16, 0, 30), Vector3(-30, 0, 14), Vector3(30, 0, -14), Vector3(14, 0, -30), Vector3(-14, 0, 30)]:
 		_box(c + Vector3(0, 0.7, 0), Vector3(3, 1.4, 1.5), _concrete(Color("2b3242")))
-		_box(c + Vector3(0, 1.42, 0), Vector3(3.02, 0.06, 1.52), _neon(Color("ffc23d"), 1.5), false)
+		_box(c + Vector3(0, 1.42, 0), Vector3(3.02, 0.06, 1.52), _neon(Color("4f7cff"), 1.5), false)
 	# murs qui sortiront de la fosse pendant la phase 2 du boss
 	for w in [[Vector3(0, 0, -7), Vector3(10, 6, 0.6)], [Vector3(0, 0, 7), Vector3(10, 6, 0.6)], [Vector3(-7, 0, 0), Vector3(0.6, 6, 10)], [Vector3(7, 0, 0), Vector3(0.6, 6, 10)]]:
 		var body := AnimatableBody3D.new()
@@ -307,7 +309,7 @@ func _build_interior() -> void:
 		var mi := MeshInstance3D.new()
 		var bm := BoxMesh.new(); bm.size = w[1]
 		mi.mesh = bm
-		mi.material_override = _ad_material(Color("ff2d6f"), Color("b25cff"))
+		mi.material_override = _ad_material(Color("8a5cff"), Color("6a4cff"))
 		body.add_child(mi)
 		body.position = w[0] + Vector3(0, PIT_Y - 4.0, 0)
 		body.set_meta("target", w[0] + Vector3(0, 3.5, 0))
@@ -320,7 +322,7 @@ func _ad_material(a: Color, b: Color) -> StandardMaterial3D:
 	m.albedo_texture = tex
 	m.emission_enabled = true
 	m.emission_texture = tex
-	m.emission_energy_multiplier = 0.8
+	m.emission_energy_multiplier = 0.6
 	m.roughness = 0.3
 	return m
 
@@ -375,7 +377,7 @@ func _add_pad(pos: Vector3, push: Vector3, power: float) -> void:
 func _build_lamps() -> void:
 	var pole := _concrete(Color("1a1f2a"))
 	var spots := [Vector3(-36, 0, -16), Vector3(36, 0, 16), Vector3(-16, 0, 36), Vector3(16, 0, -36), Vector3(-36, 0, 22), Vector3(36, 0, -22), Vector3(22, 0, 36), Vector3(-22, 0, -36)]
-	var colors := [Color("ff2d6f"), Color("3fd0c9"), Color("ffc23d"), Color("b25cff")]
+	var colors := [Color("8a5cff"), Color("3fd0c9"), Color("4f7cff"), Color("6a4cff")]
 	var i := 0
 	for s in spots:
 		_box(s + Vector3(0, 3.5, 0), Vector3(0.25, 7, 0.25), pole, true)
@@ -390,7 +392,7 @@ func _build_lamps() -> void:
 		i += 1
 	# lumière de la fosse
 	var pit_light := OmniLight3D.new()
-	pit_light.light_color = Color("ff2d6f")
+	pit_light.light_color = Color("8a5cff")
 	pit_light.light_energy = 1.5
 	pit_light.omni_range = 20.0
 	pit_light.position = Vector3(0, 2, 0)

@@ -31,6 +31,7 @@ var sweep := {}
 var visual: Node3D
 var body_mats: Array[StandardMaterial3D] = []
 var glow: StandardMaterial3D
+var edge: StandardMaterial3D   # contour lumineux de la silhouette, couleur du type
 var ring: MeshInstance3D
 var laser: MeshInstance3D
 var laser_mat: StandardMaterial3D
@@ -76,6 +77,10 @@ func _ready() -> void:
 	glow.emission_enabled = true
 	glow.emission = T.color
 	glow.emission_energy_multiplier = 3.0
+	edge = StandardMaterial3D.new()
+	edge.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	edge.cull_mode = BaseMaterial3D.CULL_FRONT
+	edge.albedo_color = T.color.lightened(0.15)
 	_build_visual()
 	if is_boss:
 		ring = MeshInstance3D.new()
@@ -121,6 +126,14 @@ func _box(size: Vector3, pos: Vector3, m: Material, parent: Node3D = null) -> Me
 	mi.material_override = m
 	mi.position = pos
 	(parent if parent else visual).add_child(mi)
+	if m in body_mats:
+		# coque retournée un peu plus grande : un liseré de 3 cm tout autour de la pièce
+		var o := MeshInstance3D.new()
+		o.mesh = bm
+		o.material_override = edge
+		o.scale = (size + Vector3.ONE * 0.06) / size
+		o.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.add_child(o)
 	return mi
 
 func _build_visual() -> void:
@@ -177,23 +190,60 @@ func _build_visual() -> void:
 				_box(Vector3(r * 0.52, h * 0.03, r * 0.52), Vector3(s * r * 1.35, h * 0.4, 0), glow)
 			_add_legs(r, h, dark)
 		_:
-			# humanoïdes : grunt, runner, brute, spitter, bouclier
-			_box(Vector3(r * 1.5, h * 0.42, r * 1.0), Vector3(0, h * 0.6, 0), dark)
-			_box(Vector3(r * 1.52, h * 0.05, r * 1.02), Vector3(0, h * 0.68, 0), glow)
-			_box(Vector3(r * 1.0, h * 0.24, r * 1.0), Vector3(0, h * 0.92, 0), mid)
-			_box(Vector3(r * 0.8, h * 0.05, 0.03), Vector3(0, h * 0.94, -r * 0.52), glow)
-			for s in [-1.0, 1.0]:
-				_box(Vector3(r * 0.35, h * 0.36, r * 0.35), Vector3(s * r * 0.95, h * 0.58, 0), mid)
+			# humanoïdes : silhouette propre à chaque type pour les reconnaître de loin
+			var torso_y := h * 0.6
+			match type_name:
+				"runner":
+					# petit, penché en avant, crête sur la tête
+					var body := _box(Vector3(r * 1.2, h * 0.36, r * 1.2), Vector3(0, h * 0.6, 0.05), dark)
+					body.rotation.x = -0.5
+					_box(Vector3(r * 0.8, h * 0.24, r * 1.2), Vector3(0, h * 0.82, -r * 0.6), mid)
+					_box(Vector3(r * 0.7, h * 0.05, 0.03), Vector3(0, h * 0.84, -r * 1.22), glow)
+					_box(Vector3(0.06, h * 0.25, r * 0.9), Vector3(0, h * 1.0, -r * 0.3), glow)
+					for s in [-1.0, 1.0]:
+						var arm := _box(Vector3(r * 0.22, h * 0.4, r * 0.22), Vector3(s * r * 0.75, h * 0.5, -r * 0.3), mid)
+						arm.rotation.x = -0.6
+				"brute":
+					# épaules énormes, tête rentrée, poing lumineux
+					_box(Vector3(r * 1.6, h * 0.45, r * 1.2), Vector3(0, h * 0.58, 0), dark)
+					_box(Vector3(r * 2.3, h * 0.16, r * 1.3), Vector3(0, h * 0.8, 0), mid)
+					_box(Vector3(r * 0.7, h * 0.16, r * 0.7), Vector3(0, h * 0.9, -r * 0.25), mid)
+					_box(Vector3(r * 0.55, h * 0.04, 0.03), Vector3(0, h * 0.91, -r * 0.6), glow)
+					_box(Vector3(r * 0.5, h * 0.12, 0.05), Vector3(0, h * 0.62, -r * 0.62), glow)
+					for s in [-1.0, 1.0]:
+						_box(Vector3(r * 0.5, h * 0.42, r * 0.5), Vector3(s * r * 1.3, h * 0.5, 0), mid)
+						_box(Vector3(r * 0.6, r * 0.6, r * 0.6), Vector3(s * r * 1.3, h * 0.27, -r * 0.1), glow)
+				"spitter":
+					# réservoir lumineux dans le dos et buse sur la tête
+					_box(Vector3(r * 1.3, h * 0.42, r * 0.9), Vector3(0, torso_y, 0), dark)
+					_box(Vector3(r * 1.0, h * 0.4, r * 0.7), Vector3(0, h * 0.62, r * 0.75), glow)
+					_box(Vector3(r * 0.9, h * 0.22, r * 0.9), Vector3(0, h * 0.9, 0), mid)
+					_box(Vector3(r * 0.35, r * 0.35, r * 0.9), Vector3(0, h * 0.9, -r * 0.8), mid)
+					_box(Vector3(r * 0.25, r * 0.25, 0.05), Vector3(0, h * 0.9, -r * 1.27), glow)
+					for s in [-1.0, 1.0]:
+						_box(Vector3(r * 0.3, h * 0.34, r * 0.3), Vector3(s * r * 0.85, h * 0.58, 0), mid)
+				_:
+					# grunt et bouclier : soldat de base, lames sur les bras pour le grunt
+					_box(Vector3(r * 1.5, h * 0.42, r * 1.0), Vector3(0, torso_y, 0), dark)
+					_box(Vector3(r * 0.5, h * 0.12, 0.05), Vector3(0, torso_y + h * 0.03, -r * 0.52), glow)
+					_box(Vector3(r * 1.0, h * 0.24, r * 1.0), Vector3(0, h * 0.92, 0), mid)
+					_box(Vector3(r * 0.8, h * 0.05, 0.03), Vector3(0, h * 0.94, -r * 0.52), glow)
+					for s in [-1.0, 1.0]:
+						_box(Vector3(r * 0.35, h * 0.36, r * 0.35), Vector3(s * r * 0.95, h * 0.58, 0), mid)
+						if type_name == "grunt":
+							_box(Vector3(0.04, 0.06, r * 1.4), Vector3(s * r * 0.95, h * 0.42, -r * 0.6), glow)
 			_add_legs(r, h, mid)
 			if T.get("shield", false):
 				var sm := StandardMaterial3D.new()
 				sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 				sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-				sm.albedo_color = Color(0.25, 0.9, 0.85, 0.35)
+				sm.albedo_color = Color(T.color.r, T.color.g, T.color.b, 0.3)
 				sm.cull_mode = BaseMaterial3D.CULL_DISABLED
 				_box(Vector3(r * 2.4, h * 0.85, 0.06), Vector3(0, h * 0.5, -r * 1.25), sm)
-				_box(Vector3(r * 2.45, 0.05, 0.08), Vector3(0, h * 0.93, -r * 1.25), glow)
-				_box(Vector3(r * 2.45, 0.05, 0.08), Vector3(0, h * 0.08, -r * 1.25), glow)
+				for y in [h * 0.93, h * 0.08]:
+					_box(Vector3(r * 2.45, 0.05, 0.08), Vector3(0, y, -r * 1.25), glow)
+				for x in [-r * 1.2, r * 1.2]:
+					_box(Vector3(0.05, h * 0.85, 0.08), Vector3(x, h * 0.5, -r * 1.25), glow)
 
 func _add_legs(r: float, h: float, m: Material) -> void:
 	for s in [-1.0, 1.0]:
@@ -306,7 +356,7 @@ func _walk(dist: float, dir: Vector3, d: float) -> void:
 	if T.ai == "ranged":
 		shoot_cd -= d
 		if shoot_cd <= 0.0 and dist < 30.0:
-			_shoot_at_player(global_position + Vector3(0, T.h * 0.9, 0), 16.0, T.dmg, Color("7dff9a"))
+			_shoot_at_player(global_position + Vector3(0, T.h * 0.9, 0), 16.0, T.dmg, T.color)
 			shoot_cd = 2.0 + randf() * 1.5
 
 func _drone(d: float) -> void:
@@ -366,7 +416,7 @@ func _sniper_fire(eye: Vector3) -> void:
 	var pe: Vector3 = p.eye_position() - Vector3(0, 0.5, 0)
 	var along := (pe - eye).dot(dirv)
 	var miss := (eye + dirv * along).distance_to(pe)
-	game.tracer(eye, far, Color("ff2d6f"))
+	game.tracer(eye, far, T.color)
 	game.sfx.play("rifle")
 	if along > 0.0 and miss < 0.9 and not game.ray_world(eye, pe):
 		game.hurt_player(T.dmg)
@@ -483,7 +533,7 @@ func _titan(dist: float, dir: Vector3, d: float) -> void:
 			var a: float = sweep.a0 + sweep.dir * sweep.t * 2.2
 			var from := global_position + Vector3(0, T.h * 0.6, 0)
 			for k in 3:
-				game.fire_shot(from, Vector3(sin(a), -0.02 + k * 0.05, cos(a)).normalized(), 26.0, 12.0, Color("ff2d6f"), 0.3)
+				game.fire_shot(from, Vector3(sin(a), -0.02 + k * 0.05, cos(a)).normalized(), 26.0, 12.0, T.color, 0.3)
 			sweep.next = 0.05
 		if sweep.t > 1.4:
 			sweep = {}
@@ -501,7 +551,7 @@ func _titan(dist: float, dir: Vector3, d: float) -> void:
 			1:
 				for k in 28:
 					var a := k / 28.0 * TAU
-					game.fire_shot(Vector3(global_position.x, 0.5, global_position.z), Vector3(cos(a), 0, sin(a)), 13.0, 18.0, Color("ff2d6f"), 0.4)
+					game.fire_shot(Vector3(global_position.x, 0.5, global_position.z), Vector3(cos(a), 0, sin(a)), 13.0, 18.0, T.color, 0.4)
 				var hop: Vector3 = (game.player.global_position - global_position) * 0.35
 				hop.y = 0.0
 				global_position += hop
