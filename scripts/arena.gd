@@ -9,6 +9,7 @@ const PLAZA := 12.0          # demi-taille de la zone centrale (point de retour 
 var perches: Array[Vector3] = []   # postes des snipers
 var anchors: Array[Vector3] = []   # socles des bras mécaniques
 var pads: Array = []               # { pos, push, power, node, ring }
+var bonus_spots: Array[Vector3] = []  # points hauts où apparaissent des primes : récompensent le mouvement
 var tiles: Array = []              # dalles qui peuvent tomber (zone 1)
 var collapsed := false             # phase 2 du boss déclenchée
 var phase2_text := "L'arène change"
@@ -136,3 +137,47 @@ func _add_pad(pos: Vector3, push: Vector3, power: float, color := Color("3fd0c9"
 	ring.position = pos + Vector3(0, 0.1, 0)
 	add_child(ring)
 	pads.append({ "pos": pos, "push": push, "power": power, "node": mi, "ring": ring })
+
+# ---------- Parcours ----------
+func _run_panel(pos: Vector3, size: Vector3, c: Color, body_mat: Material = null) -> Node3D:
+	# panneau de wall run : liserés lumineux en haut et en bas, chevrons dans le sens de la course
+	var m: Material = body_mat if body_mat else _concrete(Color("1b2130"))
+	var b := _box(pos, size, m)
+	b.set_meta("boost", true)
+	var long_x := size.x >= size.z
+	var neon := _neon(c, 2.6)
+	for y in [size.y / 2.0 - 0.08, -size.y / 2.0 + 0.08]:
+		_box(Vector3(0, y, 0), Vector3(size.x + 0.04, 0.1, size.z + 0.04), neon, false, b)
+	var n := int((size.x if long_x else size.z) / 2.5)
+	for k in n:
+		var off := -((size.x if long_x else size.z) / 2.0) + 1.25 + k * 2.5
+		for side in [-1.0, 1.0]:
+			var face := (size.z if long_x else size.x) / 2.0 + 0.02
+			for arm in [-1.0, 1.0]:
+				var ch := _box(Vector3(off, arm * 0.25, side * face) if long_x else Vector3(side * face, arm * 0.25, off), Vector3(0.7, 0.1, 0.02) if long_x else Vector3(0.02, 0.1, 0.7), neon, false, b)
+				if long_x:
+					ch.rotation.z = -arm * 0.6
+				else:
+					ch.rotation.x = arm * 0.6
+	return b
+
+func _shaft(base: Vector3, along_x: bool, height: float, c: Color, pillar_mat: Material = null) -> void:
+	# puits de wall jumps : un panneau fin face à un pilier ; on grimpe en rebondissant de l'un à l'autre,
+	# une prime attend en haut du pilier
+	var gap := 4.6
+	var pm: Material = pillar_mat if pillar_mat else _concrete(Color("232a36"))
+	var nx := Vector3(0, 0, 1) if along_x else Vector3(1, 0, 0)
+	# le panneau dépasse le haut du pilier : le dernier rebond part de plus haut que le toit
+	var ph := height + 0.9
+	var panel_size := Vector3(5.0, ph, 0.4) if along_x else Vector3(0.4, ph, 5.0)
+	_run_panel(base + nx * (-gap / 2.0 - 0.2) + Vector3(0, ph / 2.0 + 0.6, 0), panel_size, c)
+	var pillar_size := Vector3(5.0, height, 4.0) if along_x else Vector3(4.0, height, 5.0)
+	var top := base + nx * (gap / 2.0 + 2.0)
+	_box(top + Vector3(0, height / 2.0, 0), pillar_size, pm)
+	var rim := _neon(c, 1.8)
+	for e in [[Vector3(0, 0, pillar_size.z / 2.0), Vector3(pillar_size.x + 0.05, 0.08, 0.1)], [Vector3(0, 0, -pillar_size.z / 2.0), Vector3(pillar_size.x + 0.05, 0.08, 0.1)],
+			[Vector3(pillar_size.x / 2.0, 0, 0), Vector3(0.1, 0.08, pillar_size.z + 0.05)], [Vector3(-pillar_size.x / 2.0, 0, 0), Vector3(0.1, 0.08, pillar_size.z + 0.05)]]:
+		_box(top + Vector3(0, height + 0.02, 0) + e[0], e[1], rim, false)
+	for y in range(2, int(height), 2):
+		_box(top - nx * 2.01 + Vector3(0, y, 0), Vector3(4.0, 0.06, 0.02) if along_x else Vector3(0.02, 0.06, 4.0), _neon(c, 1.6), false)
+	bonus_spots.append(top + Vector3(0, height, 0))

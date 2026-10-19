@@ -236,6 +236,7 @@ func _build_interior() -> void:
 	for c in [Vector3(-16, 0, -30), Vector3(16, 0, 30), Vector3(-30, 0, 14), Vector3(30, 0, -14), Vector3(14, 0, -30), Vector3(-14, 0, 30)]:
 		_box(c + Vector3(0, 0.7, 0), Vector3(3, 1.4, 1.5), _concrete(Color("2b3242")))
 		_box(c + Vector3(0, 1.42, 0), Vector3(3.02, 0.06, 1.52), _neon(Color("4f7cff"), 1.5), false)
+	_build_routes(conc)
 	# murs qui sortiront de la fosse pendant la phase 2 du boss
 	for w in [[Vector3(0, 0, -7), Vector3(10, 6, 0.6)], [Vector3(0, 0, 7), Vector3(10, 6, 0.6)], [Vector3(-7, 0, 0), Vector3(0.6, 6, 10)], [Vector3(7, 0, 0), Vector3(0.6, 6, 10)]]:
 		var body := AnimatableBody3D.new()
@@ -253,6 +254,24 @@ func _build_interior() -> void:
 		body.set_meta("target", w[0] + Vector3(0, 3.5, 0))
 		add_child(body)
 		rise_walls.append(body)
+
+func _build_routes(conc: Material) -> void:
+	# routes en hauteur : passerelles nord et sud (jump pad), panneaux de wall run jusqu'aux tours,
+	# deux puits de wall jumps ; des primes apparaissent sur ces points hauts
+	for s in [-1.0, 1.0]:
+		var z: float = s * 33.0
+		_box(Vector3(0, 5.7, z), Vector3(18, 0.6, 5), conc)
+		for e in [-2.5, 2.5]:
+			_box(Vector3(0, 6.02, z + e), Vector3(18, 0.06, 0.12), _neon(Color("3fd0c9"), 2.2), false)
+		for x in [-8.0, 8.0]:
+			_box(Vector3(x, 2.85, z), Vector3(0.6, 5.7, 0.6), _concrete(Color("2b3242")))
+		_add_pad(Vector3(0, 0, s * 27.0), Vector3(0, 0, s * 4.0), 18.0, Color("8a5cff"))
+		bonus_spots.append(Vector3(0, 6.0, z))
+		# panneaux : de la passerelle à la tour, en courant contre le panneau
+		for x in [-1.0, 1.0]:
+			_run_panel(Vector3(x * 18.0, 8.5, s * 31.0), Vector3(14, 5.0, 0.4), Color("4fc3ff"))
+	_shaft(Vector3(-22, 0, -14), false, 8.5, Color("8a5cff"))
+	_shaft(Vector3(22, 0, 14), false, 8.5, Color("8a5cff"))
 
 func _ad_material(a: Color, b: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()

@@ -38,6 +38,7 @@ var roll_grace := 0.0
 var slide_t := 0.0
 var bolide := false        # glissade lancée juste après une roulade (arbre : Bolide)
 var hit_count := 0         # balles qui ont touché (arbre : Dixième balle)
+var recoil_t := 0.0        # propulsé par le recul du Brise-porte (arbre : Recul blessant)
 var slide_cd := 0.0
 var air := false
 var eye := 1.6
@@ -45,6 +46,8 @@ var bob := 0.0
 var wallrun_t := 0.0
 var wallrun_cd := 0.0
 var wall_n := Vector3.ZERO
+var wall_boost := false        # le mur courant est un panneau à chevrons (fait monter)
+var _side_hit: Object = null
 var skill := 0.0         # jauge de compétence, 0 à 100
 var look_acc := Vector2.ZERO
 var sway := Vector2.ZERO   # l'arme traîne derrière le regard
@@ -88,6 +91,14 @@ func eye_position() -> Vector3:
 	return cam.global_position
 
 # ---------- Préparation d'une partie ----------
+func set_weapon(weapon: Dictionary) -> void:
+	# changement d'arme en cours de run (arme générique achetée au shop)
+	W = weapon
+	ammo = W.mag
+	reload_t = 0.0
+	fire_cd = 0.0
+	_build_guns()
+
 func reset(weapon: Dictionary) -> void:
 	W = weapon.duplicate(true)
 	ammo = W.mag
@@ -144,14 +155,59 @@ func _build_guns() -> void:
 	var grip := _mat(Color("262a32"), false, 0.0, 0.8)
 	var trim := _mat(W.color, true)
 	var hot := _mat(Color("ffffff"), true)
-	var sides := [1.0, -1.0] if W.id == "uzi" else [1.0]
+	var sides := [1.0, -1.0] if W.get("dual", false) else [1.0]
 	for side in sides:
 		var g := Node3D.new()
 		rig.add_child(g)
 		var mag: MeshInstance3D
 		var muzzle_z := 0.0
 		var extra: MeshInstance3D = null
-		match W.id:
+		match W.model:
+			"pistols":
+				# Jumeaux : pistolets à culasse longue, liseré bleu, chargeur dans la crosse
+				_box(g, Vector3(0.05, 0.065, 0.24), body, Vector3(0, 0.02, -0.04))
+				_box(g, Vector3(0.052, 0.012, 0.2), trim, Vector3(0, 0.056, -0.05))
+				_box(g, Vector3(0.028, 0.028, 0.06), dark, Vector3(0, 0.02, -0.18))
+				_box(g, Vector3(0.008, 0.02, 0.008), hot, Vector3(0, 0.065, -0.14))
+				for k in 4:
+					_box(g, Vector3(0.054, 0.04, 0.008), dark, Vector3(0, 0.02, 0.02 + k * 0.02))
+				var pg := _box(g, Vector3(0.045, 0.13, 0.055), grip, Vector3(0, -0.07, 0.05))
+				pg.rotation.x = 0.25
+				_box(g, Vector3(0.012, 0.03, 0.05), dark, Vector3(0, -0.03, -0.01))
+				mag = _box(g, Vector3(0.036, 0.06, 0.04), dark, Vector3(0, -0.135, 0.07))
+				_box(mag, Vector3(0.038, 0.02, 0.042), trim, Vector3(0, -0.02, 0))
+				muzzle_z = -0.22
+			"sawed":
+				# Brise-porte : canons sciés superposés, crosse pistolet, bande orange
+				extra = _box(g, Vector3(0.001, 0.001, 0.001), body, Vector3(0, 0.02, -0.06)) # pivot des canons
+				for y in [0.0, 0.042]:
+					_box(extra, Vector3(0.05, 0.04, 0.34), dark, Vector3(0, y, -0.17))
+					_box(extra, Vector3(0.03, 0.03, 0.01), hot if y == 0.0 else dark, Vector3(0, y, -0.345))
+				_box(extra, Vector3(0.056, 0.012, 0.3), trim, Vector3(0, 0.07, -0.15))
+				_box(extra, Vector3(0.06, 0.03, 0.08), body, Vector3(0, -0.035, -0.12))
+				_box(g, Vector3(0.08, 0.1, 0.14), body, Vector3(0, 0.02, 0.04))
+				_box(g, Vector3(0.082, 0.014, 0.1), trim, Vector3(0, 0.072, 0.04))
+				var sg := _box(g, Vector3(0.055, 0.14, 0.06), grip, Vector3(0, -0.07, 0.12))
+				sg.rotation.x = 0.35
+				_box(g, Vector3(0.012, 0.035, 0.05), dark, Vector3(0, -0.035, 0.05))
+				mag = _box(g, Vector3(0.05, 0.05, 0.04), _mat(Color("c0392b"), false, 0.3, 0.6), Vector3(0, 0.04, -0.03)) # cartouches
+				muzzle_z = -0.42
+			"revolver":
+				# Verdict : revolver lourd, barillet cannelé, canon long avec rail
+				_box(g, Vector3(0.06, 0.08, 0.16), body, Vector3(0, 0.01, 0.0))
+				_box(g, Vector3(0.036, 0.04, 0.3), dark, Vector3(0, 0.03, -0.22))
+				_box(g, Vector3(0.02, 0.016, 0.3), trim, Vector3(0, 0.058, -0.22))
+				_box(g, Vector3(0.01, 0.02, 0.01), hot, Vector3(0, 0.074, -0.36))
+				extra = _box(g, Vector3(0.08, 0.08, 0.09), dark, Vector3(0, 0.015, -0.05)) # barillet
+				for k in 3:
+					var fl := _box(extra, Vector3(0.084, 0.012, 0.06), trim, Vector3(0, -0.03 + k * 0.03, 0))
+					fl.rotation.z = k * 0.6
+				_box(g, Vector3(0.02, 0.03, 0.03), dark, Vector3(0, 0.06, 0.07)) # chien
+				var rg := _box(g, Vector3(0.05, 0.14, 0.065), grip, Vector3(0, -0.08, 0.08))
+				rg.rotation.x = 0.3
+				_box(g, Vector3(0.052, 0.04, 0.067), trim, Vector3(0, -0.115, 0.095))
+				mag = _box(g, Vector3(0.06, 0.06, 0.02), _mat(Color("d9a441"), false, 0.9, 0.3), Vector3(0, 0.015, 0.0)) # balles
+				muzzle_z = -0.38
 			"rifle":
 				_box(g, Vector3(0.08, 0.1, 0.5), body)
 				_box(g, Vector3(0.05, 0.02, 0.44), dark, Vector3(0, 0.06, -0.02))
@@ -205,7 +261,7 @@ func _build_guns() -> void:
 		# flash de bouche : boule + étoile
 		var fm := MeshInstance3D.new()
 		var sm := SphereMesh.new()
-		sm.radius = 0.05 if W.id == "uzi" else 0.075
+		sm.radius = 0.05 if W.get("dual", false) else 0.075
 		sm.height = sm.radius * 2.0
 		fm.mesh = sm
 		fm.material_override = _mat(Color("ffd28a"), true)
@@ -213,10 +269,10 @@ func _build_guns() -> void:
 		fm.visible = false
 		g.add_child(fm)
 		for k in 2:
-			var sp := _box(fm, Vector3(0.018, 0.018, 0.22 if W.id != "uzi" else 0.14), fm.material_override, Vector3.ZERO)
+			var sp := _box(fm, Vector3(0.018, 0.018, 0.22 if not W.get("dual", false) else 0.14), fm.material_override, Vector3.ZERO)
 			sp.rotation = Vector3(0, 0, k * PI / 2) + Vector3(0.4 * (k * 2 - 1), 0.4, 0)
-		var bx: float = 0.2 * side if W.id == "uzi" else (0.24 if W.id == "shotgun" else 0.22)
-		guns.append({ "g": g, "mag": mag, "mag_home": mag.position, "muzzle": Vector3(0, 0.01, muzzle_z), "fm": fm, "fm_t": 0.0,
+		var bx: float = 0.2 * side if W.get("dual", false) else (0.24 if W.model == "shotgun" else 0.22)
+		guns.append({ "g": g, "mag": mag, "mag_home": mag.position, "extra_home": extra.transform if extra else Transform3D(), "muzzle": Vector3(0, 0.01, muzzle_z), "fm": fm, "fm_t": 0.0,
 			"kick": 0.0, "side": side, "bx": bx, "extra": extra, "ejected": false, "back": false })
 
 func _eject_casing(G: Dictionary) -> void:
@@ -235,8 +291,9 @@ func _eject_casing(G: Dictionary) -> void:
 	p.angular_velocity_min = 400.0
 	p.angular_velocity_max = 700.0
 	var bm := BoxMesh.new()
-	bm.size = Vector3(0.012, 0.012, 0.03) if W.id != "shotgun" else Vector3(0.022, 0.022, 0.05)
-	bm.material = _mat(Color("d9a441") if W.id != "shotgun" else Color("c0392b"), false, 0.9, 0.3)
+	var shell: bool = W.model in ["shotgun", "sawed"]
+	bm.size = Vector3(0.012, 0.012, 0.03) if not shell else Vector3(0.022, 0.022, 0.05)
+	bm.material = _mat(Color("d9a441") if not shell else Color("c0392b"), false, 0.9, 0.3)
 	p.mesh = bm
 	game.world.add_child(p)
 	p.global_transform = G.g.global_transform
@@ -276,9 +333,14 @@ func move_input() -> Vector3:
 	return v.normalized() if v.length() > 1.0 else v
 
 func jump() -> void:
-	if wallrun_t > 0.0 or (is_on_wall() and not is_on_floor() and wallrun_cd <= 0.0 and _wall_ok(get_wall_normal())):
-		# wall jump : on repousse du mur en gardant l'élan
-		var n := wall_n if wallrun_t > 0.0 else _flat(get_wall_normal())
+	var near := Vector3.ZERO
+	if wallrun_t <= 0.0 and not is_on_floor() and wallrun_cd <= 0.0:
+		near = get_wall_normal() if is_on_wall() else _near_wall()
+		if near != Vector3.ZERO and not _wall_ok(near):
+			near = Vector3.ZERO
+	if wallrun_t > 0.0 or near != Vector3.ZERO:
+		# wall jump : on repousse du mur en gardant l'élan (un mur tout proche suffit, même sans le toucher)
+		var n := wall_n if wallrun_t > 0.0 else _flat(near)
 		var along := Vector3(velocity.x, 0, velocity.z)
 		along -= n * along.dot(n)
 		velocity = along * 1.05 + n * 8.5
@@ -360,6 +422,7 @@ func simulate(it: Dictionary, delta: float) -> void:
 	wallrun_cd = maxf(0.0, wallrun_cd - delta)
 	iframes = maxf(0.0, iframes - delta)
 	roll_grace = maxf(0.0, roll_grace - delta)
+	recoil_t = maxf(0.0, recoil_t - delta)
 	if game.up.regen > 0.0 and hp < game.up.max_hp:
 		hp = minf(game.up.max_hp, hp + game.up.regen * delta)
 	sway = sway.lerp(Vector2(clampf(it.look.x * 6.0, -0.08, 0.08), clampf(it.look.y * 6.0, -0.06, 0.06)), minf(1.0, 14.0 * delta))
@@ -383,7 +446,7 @@ func simulate(it: Dictionary, delta: float) -> void:
 				G.mag.visible = true
 				G.mag.position = G.mag_home
 				if G.extra:
-					G.extra.position.z = -0.33
+					G.extra.transform = G.extra_home
 	if it.fire and fire_cd <= 0.0 and reload_t <= 0.0:
 		shoot()
 
@@ -457,13 +520,26 @@ static func _flat(n: Vector3) -> Vector3:
 func _wall_ok(n: Vector3) -> bool:
 	return absf(n.y) < 0.3
 
+func _wall_collider() -> Object:
+	if is_on_wall():
+		for i in get_slide_collision_count():
+			var c := get_slide_collision(i)
+			if absf(c.get_normal().y) < 0.3:
+				return c.get_collider()
+	return _side_hit
+
 func _check_wallrun(it: Dictionary) -> void:
 	if wallrun_t > 0.0:
 		var wn := get_wall_normal() if is_on_wall() else _side_wall()
-		if is_on_floor() or wn == Vector3.ZERO:
+		if is_on_floor():
 			_end_wallrun()
+		elif wn == Vector3.ZERO:
+			# trou entre deux panneaux : on peut se raccrocher tout de suite au suivant
+			_end_wallrun(0.0)
 		else:
 			wall_n = _flat(wn)
+			var c := _wall_collider()
+			wall_boost = c != null and c.has_meta("boost")
 		return
 	if is_on_floor() or wallrun_cd > 0.0 or roll_t > 0.0 or it.move.y > -0.3:
 		return
@@ -476,6 +552,8 @@ func _check_wallrun(it: Dictionary) -> void:
 	if along.length() < 4.0:
 		return
 	wall_n = n
+	var wc := _wall_collider()
+	wall_boost = wc != null and wc.has_meta("boost")
 	wallrun_t = WALLRUN_DUR * game.up.wallrun
 	velocity.y = maxf(velocity.y, 2.0)
 	jumps = 1
@@ -486,8 +564,22 @@ func _side_wall() -> Vector3:
 	var space := get_world_3d().direct_space_state
 	var from := global_position + Vector3(0, 1.0, 0)
 	var right := Vector3(1, 0, 0).rotated(Vector3.UP, yaw)
+	_side_hit = null
 	for side in [right, -right]:
 		var q := PhysicsRayQueryParameters3D.create(from, from + side * 0.9, 1, [get_rid()])
+		var r := space.intersect_ray(q)
+		if r:
+			_side_hit = r.collider
+			return r.normal
+	return Vector3.ZERO
+
+func _near_wall() -> Vector3:
+	# mur à moins d'un mètre dans n'importe quelle direction : permet d'enchaîner les wall jumps dans un puits
+	var space := get_world_3d().direct_space_state
+	var from := global_position + Vector3(0, 1.0, 0)
+	for k in 8:
+		var d := Vector3(0, 0, -1).rotated(Vector3.UP, yaw + k * PI / 4.0)
+		var q := PhysicsRayQueryParameters3D.create(from, from + d * 1.0, 1, [get_rid()])
 		var r := space.intersect_ray(q)
 		if r:
 			return r.normal
@@ -503,13 +595,17 @@ func _wallrun_step(delta: float) -> void:
 	along = along.normalized() * maxf(along.length(), M.speed * game.up.speed)
 	velocity.x = along.x - wall_n.x * 3.0
 	velocity.z = along.z - wall_n.z * 3.0
-	velocity.y = maxf(velocity.y - 5.0 * delta, -1.2)
+	if wall_boost:
+		# panneau à chevrons : il fait monter pendant la course
+		velocity.y = move_toward(velocity.y, 2.6, 14.0 * delta)
+	else:
+		velocity.y = maxf(velocity.y - 5.0 * delta, -1.2)
 	if wallrun_t <= 0.0:
 		_end_wallrun()
 
-func _end_wallrun() -> void:
+func _end_wallrun(cd := 0.2) -> void:
 	wallrun_t = 0.0
-	wallrun_cd = 0.2
+	wallrun_cd = cd
 
 func launch(v: Vector3) -> void:
 	# jump pad
@@ -572,7 +668,31 @@ static func _ease(t: float) -> float:
 func _animate_reload(G: Dictionary, p: float) -> Dictionary:
 	var tilt := _ease(p / 0.12) * (1.0 - _ease((p - 0.85) / 0.15))
 	var o := { "y": -0.04 * tilt, "rx": 0.25 * tilt, "rz": 0.45 * tilt * G.side }
-	match W.id:
+	match W.model:
+		"sawed":
+			# Brise-porte : on casse l'arme, les douilles sautent, on la referme d'un coup sec
+			var open := _ease((p - 0.05) / 0.2) * (1.0 - _ease((p - 0.75) / 0.1))
+			o.rx += 0.35 * open
+			if G.extra:
+				G.extra.transform = G.extra_home
+				G.extra.rotation.x = -0.75 * open
+			if p > 0.25 and not G.ejected:
+				_eject(G)
+			_mag_back(G, p, 0.45, 0.7, o)
+			if p > 0.8 and not reload_fx.has("snap"):
+				reload_fx.snap = true
+				game.sfx.play("pump")
+		"revolver":
+			# Verdict : le barillet bascule et tourne, le chargeur rapide tombe, un coup de poignet referme
+			var tilt2 := _ease((p - 0.05) / 0.2) * (1.0 - _ease((p - 0.8) / 0.12))
+			o.rz += 0.8 * tilt2 * G.side
+			if G.extra:
+				G.extra.transform = G.extra_home
+				G.extra.position.x = 0.05 * tilt2
+				G.extra.rotation.z = TAU * 2.0 * _ease((p - 0.15) / 0.65)
+			if p > 0.25 and not G.ejected:
+				_eject(G)
+			_mag_back(G, p, 0.5, 0.75, o)
 		"rifle":
 			# le fusil fait un tour complet et expulse le chargeur en haut du mouvement
 			o.rx += -TAU * _ease((p - 0.12) / 0.4)
@@ -588,7 +708,8 @@ func _animate_reload(G: Dictionary, p: float) -> Dictionary:
 				_eject(G)
 			_mag_back(G, p, 0.55, 0.75, o)
 			if G.extra:
-				G.extra.position.z = -0.33 + 0.09 * sin(PI * _ease((p - 0.8) / 0.14))
+				G.extra.transform = G.extra_home
+				G.extra.position.z += 0.09 * sin(PI * _ease((p - 0.8) / 0.14))
 			if p > 0.8 and not reload_fx.has("pump"):
 				reload_fx.pump = true
 				game.sfx.play("pump")
@@ -635,7 +756,7 @@ func _eject(G: Dictionary) -> void:
 	t.scale = Vector3.ONE * 1.6
 	var fwd := Vector3(0, 0, -1).rotated(Vector3.UP, yaw)
 	var right := Vector3(1, 0, 0).rotated(Vector3.UP, yaw)
-	t.vel = fwd * 5.0 + right * G.side * (1.6 if W.id == "uzi" else 0.6) + Vector3(0, 6.5, 0) + Vector3(velocity.x, 0, velocity.z) * 0.6
+	t.vel = fwd * 5.0 + right * G.side * (1.6 if W.get("dual", false) else 0.6) + Vector3(0, 6.5, 0) + Vector3(velocity.x, 0, velocity.z) * 0.6
 	t.spin = Vector3(8.0 + randf() * 6.0, 3.0, 5.0)
 	thrown.append(t)
 	game.sfx.play("spin")
@@ -673,7 +794,21 @@ func shoot() -> void:
 	var ram: bool = slide_t > 0.0 and game.tree.has("w_b4")
 	if ram:
 		dmg_mul *= 1.5
-	var spread: float = W.spread * (0.5 if air and game.tree.has("w_j1") else 1.0)
+	var spread: float = W.spread
+	if air and W.has("air_precise"):
+		spread *= W.air_precise
+	if air and game.tree.has("w_j1"):
+		spread = 0.0
+		dmg_mul *= 1.2
+	if W.has("recoil"):
+		# Brise-porte : le tir propulse à l'opposé de la visée (vise le sol pour décoller)
+		var push: Vector3 = basis.z * W.recoil * game.up.get("recoil_mult", 1.0)
+		if is_on_floor() and push.y < 3.0:
+			push *= 0.35
+		velocity += push
+		if push.y > 0.0:
+			velocity.y = maxf(velocity.y, push.y)
+		recoil_t = 0.45
 	if surge:
 		dmg_mul *= 1.5
 	if game.up.air_dmg > 0 and air:
@@ -721,13 +856,14 @@ func shoot() -> void:
 				var ctx := { "src": "gun", "head": head_hit, "from": origin }
 				if head_hit and game.tree.has("w_v1"):
 					ammo = mini(W.mag, ammo + 1)
-				if head_hit and game.tree.has("w_v2") and not en.is_boss:
-					# Exécution : un tir à la tête achève un ennemi affaibli
-					var seuil: float = 0.4 if game.tree.has("w_v3") else 0.3
+				if head_hit and W.has("execute") and not en.is_boss:
+					# Verdict : un tir à la tête achève un ennemi affaibli
+					var seuil: float = 0.4 if game.tree.has("w_v3") else W.execute
 					if en.hp - dmg <= en.max_hp * seuil and en.reform_t <= 0.0:
 						dmg = en.hp + 1.0
 						ctx.exec = true
-						ammo = mini(W.mag, ammo + 1)
+						if game.tree.has("w_v2"):
+							ammo = mini(W.mag, ammo + 1)
 						game.add_style("EXÉCUTION", 30, true)
 				game.damage_enemy(en, dmg, r.position, ctx)
 				if ram:

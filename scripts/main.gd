@@ -33,10 +33,12 @@ var kills := 0
 var taken := {}
 var up := {}
 var character := "kade"
-var chosen := "rifle"
+var chosen := "jumeaux"
 var best := 0
 var best_wave := 0
 var pickups: Array = []
+var bonus_t := 12.0
+var route_trace := false             # prochaine prime sur un point haut de l'arène
 var zone_idx := 0
 var start_zone := 0
 var hazards: Array = []   # flaques de métal { pos, r, life, dps, delay, node, warn }
@@ -121,6 +123,8 @@ func _ready() -> void:
 		_autotest()
 	elif "--showcase" in OS.get_cmdline_user_args():
 		_showcase()
+	elif "--routes" in OS.get_cmdline_user_args():
+		_routes_only()
 
 func _setup_input() -> void:
 	var add := func(action: String, keys: Array, mouse: int, buttons: Array, axes: Array):
@@ -239,8 +243,8 @@ func _load_save() -> void:
 	if cfg.load(SAVE) == OK:
 		best = cfg.get_value("game", "best", 0)
 		best_wave = cfg.get_value("game", "best_wave", 0)
-		var c: String = cfg.get_value("game", "weapon", "rifle")
-		if Data.WEAPONS.has(c):
+		var c: String = cfg.get_value("game", "weapon", "jumeaux")
+		if c in Data.CHARACTERS[character].weapons:
 			chosen = c
 		start_zone = clampi(cfg.get_value("game", "zone", 0), 0, Data.ZONES.size() - 1)
 		zone_idx = start_zone
@@ -277,6 +281,7 @@ func reset_game() -> void:
 		c.queue_free()
 	enemies.clear()
 	pickups.clear()
+	bonus_t = 12.0
 	boss = null
 	up = Data.BASE_UP.duplicate()
 	taken = {}
@@ -616,6 +621,7 @@ func _process(delta: float) -> void:
 				spawn_enemy(to_spawn.pop_back(), mult)
 			spawn_timer = maxf(0.3, 1.1 - wave * 0.05)
 	_update_pickups(delta)
+	_update_bonus(delta)
 	_update_hud()
 
 func _update_pads(delta: float) -> void:
@@ -634,6 +640,21 @@ func _update_pads(delta: float) -> void:
 			tw.tween_property(pad.ring, "scale", Vector3.ONE, 0.25)
 			return
 
+func _update_bonus(delta: float) -> void:
+	# une prime sur un point haut (passerelle, puits) toutes les ~18 s : le mouvement rapporte
+	bonus_t -= delta
+	if bonus_t > 0.0 or city.bonus_spots.is_empty():
+		return
+	bonus_t = randf_range(15.0, 21.0)
+	if pickups.filter(func(pk): return pk.kind == "bonus").size() >= 2:
+		return
+	var spots: Array = city.bonus_spots.filter(func(s): return pickups.all(func(pk): return Vector2(pk.node.position.x - s.x, pk.node.position.z - s.z).length() > 2.0))
+	if spots.is_empty():
+		return
+	var s: Vector3 = spots[randi() % spots.size()]
+	_drop_pickup(s, "bonus", s.y)
+	hud.add_feed("PRIME EN HAUTEUR", true)
+
 func _update_pickups(delta: float) -> void:
 	for pk in pickups.duplicate():
 		if not is_instance_valid(pk.node):
@@ -647,6 +668,10 @@ func _update_pickups(delta: float) -> void:
 			match pk.kind:
 				"hp": player.hp = minf(up.max_hp, player.hp + 25.0)
 				"cr": credits += 15
+				"bonus":
+					credits += 30
+					player.hp = minf(up.max_hp, player.hp + 20.0)
+					add_style("PRIME", 120.0, true)
 				_: player.ammo = player.W.mag
 			sfx.play("pickup")
 		if near or pk.life <= 0.0:
@@ -745,12 +770,11 @@ func _end_surge() -> void:
 
 func _slide_hits() -> void:
 	# Fauchage : la glissade renverse les petits ennemis. Bolide : après une roulade, elle blesse tout.
-	if player.slide_t <= 0.0:
+	var ram: bool = player.recoil_t > 0.0 and tree.has("w_b2")
+	if player.slide_t <= 0.0 and not ram:
 		slide_hit = {}
 		return
-	var bolide: bool = tree.has("m_g4") and player.bolide
-	if not bolide and not tree.has("m_g2"):
-		return
+	var bolide: bool = (tree.has("m_g4") and player.bolide and player.slide_t > 0.0) or ram
 	var pp: Vector3 = player.global_position
 	for e in enemies.duplicate():
 		if not is_instance_valid(e) or not e.alive or slide_hit.has(e):
@@ -761,7 +785,7 @@ func _slide_hits() -> void:
 		if bolide:
 			slide_hit[e] = true
 			damage_enemy(e, (55.0 + 6.0 * wave) * (1.0 + Data.ZONE_HP * zone_idx), e.center(), { "src": "boom" })
-		elif not e.is_boss and Data.ENEMIES.get(e.type_name, {}).get("hp", 999.0) <= 40.0:
+		elif tree.has("m_g2") and not e.is_boss and Data.ENEMIES.get(e.type_name, {}).get("hp", 999.0) <= 40.0:
 			slide_hit[e] = true
 			damage_enemy(e, 40.0, e.center(), { "src": "boom" })
 			knockback(e, Vector3(e.global_position.x - pp.x, 0, e.global_position.z - pp.z), 3.0)
@@ -980,7 +1004,7 @@ func _tree_on_kill(en, c: Vector3, ctx: Dictionary, aerial: bool) -> void:
 		player.ammo = player.W.mag
 		player.reload_t = 0.0
 	if close and tree.has("w_b3"):
-		player.ammo = mini(player.W.mag, player.ammo + 2)
+		player.ammo = mini(player.W.mag, player.ammo + 1)
 	if close and tree.has("v_r2"):
 		player.hp = minf(up.max_hp, player.hp + 4.0 * leech)
 	if aerial and tree.has("v_t2"):
@@ -1268,19 +1292,25 @@ func tracer(a: Vector3, b: Vector3, color: Color) -> void:
 	mi.look_at(b, Vector3.UP if absf((b - a).normalized().y) < 0.99 else Vector3.RIGHT)
 	get_tree().create_timer(0.06, false).timeout.connect(mi.queue_free)
 
-func _drop_pickup(pos: Vector3, kind := "") -> void:
+func _drop_pickup(pos: Vector3, kind := "", ground := -100.0) -> void:
 	if kind == "":
 		var r := randf()
 		kind = "hp" if r < 0.5 else ("cr" if r < 0.8 else "ammo")
 	var mi := MeshInstance3D.new()
 	var pm := PrismMesh.new(); pm.size = Vector3(0.5, 0.5, 0.5)
 	mi.mesh = pm
-	var col := { "hp": Color("3fd0c9"), "cr": Color("ffc23d"), "ammo": Color("ff4fa3") }
+	var col := { "hp": Color("3fd0c9"), "cr": Color("ffc23d"), "ammo": Color("ff4fa3"), "bonus": Color("ffe14f") }
 	mi.material_override = _unshaded(col[kind], 3.0)
 	world.add_child(mi)
 	var y := maxf(0.0, pos.y - 0.6) if pos.y < 9.5 else 9.0
+	if ground > -100.0:
+		y = ground
+	var life := 15.0
+	if kind == "bonus":
+		mi.scale = Vector3.ONE * 1.6
+		life = 14.0
 	mi.global_position = Vector3(pos.x, y + 0.8, pos.z)
-	pickups.append({ "node": mi, "kind": kind, "life": 15.0, "y": y })
+	pickups.append({ "node": mi, "kind": kind, "life": life, "y": y })
 
 # ---------- Augments (offerts après chaque boss) ----------
 func _roll_augments(n: int) -> Array:
@@ -1359,6 +1389,12 @@ func apply_augment(id: String) -> void:
 		"u_drum": W.mag = roundi(W.mag * 1.5); player.ammo = W.mag
 		"u_air": up.air_dmg += 1
 		"u_frenzy": W.rate /= 1.2
+		"j_drum": W.mag = roundi(W.mag * 1.4); player.ammo = W.mag
+		"j_rate": W.rate /= 1.2
+		"b_pellets": W.pellets += 4
+		"b_kick": up.recoil_mult = up.get("recoil_mult", 1.0) * 1.3
+		"v_dmg": W.dmg *= 1.25
+		"v_speed": W.reload *= 0.7
 
 # ---------- Shop (après les rounds 3, 6 et 9) ----------
 func open_shop() -> void:
@@ -1367,8 +1403,13 @@ func open_shop() -> void:
 	var n_taken := 0
 	for id in taken:
 		n_taken += taken[id]
-	for a in _roll_augments(3):
+	for a in _roll_augments(2):
 		shop_offers.append({ "kind": "aug", "id": a.id, "name": a.name, "desc": a.desc, "tag": player.W.name if a.has("weapon") else "Augment · " + a.tag, "price": Data.AUG_PRICE + 15 * n_taken, "data": a })
+	var others: Array = Data.GENERICS.filter(func(g): return g != player.W.id)
+	if not others.is_empty():
+		var gid: String = others[randi() % others.size()]
+		var GW: Dictionary = Data.WEAPONS[gid]
+		shop_offers.append({ "kind": "weapon", "id": gid, "name": GW.name, "desc": GW.blurb + " Remplace ton arme actuelle (augments communs gardés).", "tag": "Arme générique", "price": Data.WEAPON_PRICE + 40 * zone_idx })
 	shop_offers.append({ "kind": "upgrade", "id": "upgrade", "name": "%s niv. %d" % [player.W.name, weapon_level + 1], "desc": "+15 % de dégâts, +10 % de balles par chargeur", "tag": "Arme supérieure", "price": Data.UPGRADE_PRICE + 80 * (weapon_level - 1) })
 	for h in Data.HEALS:
 		shop_offers.append({ "kind": "heal", "id": h.id, "name": h.name, "desc": h.desc, "tag": "Soin", "price": h.price })
@@ -1399,6 +1440,8 @@ func buy(i: int) -> void:
 	var W: Dictionary = player.W
 	match o.kind:
 		"aug": _take_augment(o.data)
+		"weapon":
+			_swap_weapon(o.id)
 		"upgrade":
 			weapon_level += 1
 			W.dmg *= 1.15
@@ -1407,6 +1450,24 @@ func buy(i: int) -> void:
 		"heal":
 			player.hp = minf(up.max_hp, player.hp + (40.0 if o.id == "heal_s" else up.max_hp))
 	_refresh_shop()
+
+func _swap_weapon(id: String) -> void:
+	# nouvelle arme : on repart de ses stats, puis on réapplique le niveau d'arme et les augments
+	# communs ou propres à cette arme (ceux d'une autre arme sont perdus)
+	var W: Dictionary = Data.WEAPONS[id].duplicate(true)
+	player.set_weapon(W)
+	for k in weapon_level - 1:
+		W.dmg *= 1.15
+		W.mag = roundi(W.mag * 1.1)
+	for a in Data.AUGMENTS:
+		if not taken.has(a.id) or (a.has("weapon") and a.weapon != id):
+			continue
+		if a.id in ["speed", "roll", "slide", "jump", "hp", "leech", "regen", "boom", "greed", "juggle", "show"]:
+			continue # effets sur le perso, déjà appliqués
+		for k in taken[a.id]:
+			apply_augment(a.id)
+	player.ammo = W.mag
+	hud.banner(W.name, "Nouvelle arme")
 
 # ---------- Arbre de compétences ----------
 func open_tree() -> void:
@@ -1432,8 +1493,7 @@ func pick_tree(id: String) -> void:
 	var W: Dictionary = player.W
 	match id:
 		"w_t2": up.mag_boom += 0.4
-		"w_b1": W.mag += 2; player.ammo = W.mag
-		"w_b2": up.recoil_jump += 1
+		"w_b1": W.mag += 1; player.ammo = W.mag
 		"s_t1": up.skill_gain *= 1.25
 		"s_t2": up.skill_time += 2.0
 		"v_t1": up.max_hp += 25.0; player.hp += 25.0
@@ -1506,17 +1566,22 @@ func _drain_between(tag: String) -> void:
 func _showcase() -> void:
 	# captures des armes, puis des ennemis et des boss figés devant la caméra
 	await _wait(1.0)
-	for w in (Data.WEAPON_ORDER if zone_idx == 0 else ["rifle"]):
+	for w in (Data.WEAPON_ORDER + Data.GENERICS if zone_idx == 0 else ["verdict"]):
 		start_with(w)
 		_clear_round()
 		player.global_position = Vector3(-30, 0.1, 10)
 		player.yaw = -PI / 2
 		await _wait(0.4)
 		await _shot("gun_" + w)
-	start_with("rifle")
+	start_with("verdict")
 	await _wait(0.2)
 	_clear_round()
 	wave = 1; cleared = 1; intermission = 999.0
+	if zone().arena == "foundry":
+		await _route_shots(Vector3(-14, 7.0, 38.5), Vector3(21, 4, 18), Vector3(20.3, 5.0, 11.0), PI, 0.45)
+	else:
+		await _route_shots(Vector3(-16.5, 8.5, -14), Vector3(0, 5, -33), Vector3(10.0, 7.5, 30.3), -PI / 2, -0.45)
+	_clear_round()
 	player.hp = 1e9
 	enemy_slow = 0.0
 	player.global_position = Vector3(0, 0.1, 17)
@@ -1564,6 +1629,33 @@ func _showcase() -> void:
 	await _shot("tree")
 	get_tree().quit()
 
+func _route_shots(view: Vector3, target: Vector3, run_from: Vector3, run_yaw: float, turn: float) -> void:
+	# vue d'ensemble des parcours (avec des primes posées), puis un wall run sur panneau en cours
+	for s in city.bonus_spots:
+		_drop_pickup(s, "bonus", s.y)
+	player.global_position = view
+	player.velocity = Vector3.ZERO
+	var d := target - (view + Vector3(0, 1.6, 0))
+	player.yaw = atan2(-d.x, -d.z)
+	player.pitch = atan2(d.y, Vector2(d.x, d.z).length())
+	player.forced_intent = { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	await _wait(0.6)
+	await _shot("routes")
+	player.global_position = run_from
+	player.yaw = run_yaw
+	player.pitch = 0.05
+	player.velocity = Vector3(0, 0, -12).rotated(Vector3.UP, run_yaw) + Vector3(0, 6.0, 0)
+	player.forced_intent = { "move": Vector2(0, -1), "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	await _wait(0.35)
+	player.yaw = run_yaw + turn
+	player.pitch = -0.2
+	await _wait(0.1)
+	await _shot("wallrun_panel")
+	player.forced_intent = {}
+	for pk in pickups:
+		pk.node.queue_free()
+	pickups.clear()
+
 func _check_spawns(tag: String) -> void:
 	# aucune position d'apparition dans le décor ; l'ancien tirage au hasard en donnait
 	var bad := 0
@@ -1588,6 +1680,8 @@ func _zone2_test() -> void:
 	_clear_round()
 	await _wait(0.2)
 	intermission = 999.0
+	await _route_test("z2", Vector3(6, 0, -34), Vector3(20.3, 5.0, 11.0), PI, Vector3(0, 0, 30.5), Vector3(0, 0, -1))
+	_clear_round()
 	# bras mécanique : le joueur est sur sa trajectoire, il doit être touché
 	spawn_enemy("arm", 1.0)
 	var arm = enemies[-1]
@@ -1673,8 +1767,8 @@ func _zone2_test() -> void:
 		await _wait(0.5)
 
 func _tree_test() -> void:
-	# quelques effets de l'arbre, sur une partie neuve au fusil (Verdict)
-	start_with("rifle")
+	# quelques effets de l'arbre, sur une partie neuve au Verdict
+	start_with("verdict")
 	await _wait(1.0)
 	_clear_round()
 	intermission = 999.0
@@ -1683,7 +1777,7 @@ func _tree_test() -> void:
 		pick_tree(id)
 	state = "play"
 	print("[tree] owned=%d max_hp=%d shield=%d" % [tree.size(), int(up.max_hp), int(shield)])
-	print("[tree] can take uzi node with rifle=%s" % can_take("w_j1"))
+	print("[tree] can take Jumeaux node with Verdict=%s" % can_take("w_j1"))
 	player.hp = 50.0
 	hurt_player(20.0, true)
 	print("[tree] shield absorbs: hp=%d shield=%d" % [int(player.hp), int(shield)])
@@ -1719,6 +1813,81 @@ func _tree_test() -> void:
 	await _wait(0.3)
 	await _shot("tree")
 
+func _nearest_pad(p: Vector3) -> Dictionary:
+	var best: Dictionary = city.pads[0]
+	for pad in city.pads:
+		if pad.pos.distance_to(p) < best.pos.distance_to(p):
+			best = pad
+	return best
+
+func _route_test(tag: String, pad_at: Vector3, run_from: Vector3, run_yaw: float, shaft_mid: Vector3, shaft_n: Vector3) -> void:
+	# parcours : jump pad vers la passerelle, wall run sur un panneau, montée d'un puits en wall jumps
+	var idle := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	var pad := _nearest_pad(pad_at)
+	player.forced_intent = idle
+	player.global_position = pad.pos + Vector3(0, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	await _wait(2.0)
+	print("[%s] route pad -> y=%.2f floor=%s pos=%s" % [tag, player.global_position.y, player.is_on_floor(), str(player.global_position.snapped(Vector3.ONE * 0.1))])
+	if run_from != Vector3.ZERO:
+		player.global_position = run_from
+		player.yaw = run_yaw
+		player.rotation.y = run_yaw
+		player.velocity = Vector3(0, 0, -12).rotated(Vector3.UP, run_yaw) + Vector3(0, 6.0, 0)
+		var fwd := idle.duplicate(); fwd.move = Vector2(0, -1)
+		player.forced_intent = fwd
+		var best := 0.0
+		for k in 90:
+			await get_tree().physics_frame
+			best = maxf(best, player.wallrun_t)
+			if route_trace and k % 6 == 0:
+				print("  run k=%d pos=%s wr=%.2f boost=%s vy=%.1f" % [k, str(player.global_position.snapped(Vector3.ONE * 0.1)), player.wallrun_t, player.wall_boost, player.velocity.y])
+		await _wait(0.8)
+		print("[%s] route panel wallrun=%s end=%s floor=%s" % [tag, best > 0.0, str(player.global_position.snapped(Vector3.ONE * 0.1)), player.is_on_floor()])
+		await _shot(tag + "_panel")
+	# puits : on rebondit d'un mur à l'autre
+	player.forced_intent = idle
+	player.global_position = shaft_mid + Vector3(0, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	await _wait(0.4)
+	player.velocity = shaft_n * 6.0 + Vector3(0, 9.0, 0)
+	var top := 0.0
+	var bounces := 0
+	for k in 300:
+		await get_tree().physics_frame
+		top = maxf(top, player.global_position.y)
+		if route_trace and k % 6 == 0:
+			print("  shaft k=%d pos=%s vy=%.1f" % [k, str(player.global_position.snapped(Vector3.ONE * 0.1)), player.velocity.y])
+		if player.wallrun_cd <= 0.0 and not player.is_on_floor() and player._near_wall() != Vector3.ZERO and player.velocity.y < 3.0:
+			player.jump()
+			bounces += 1
+			if bounces > 8:
+				break
+		if player.is_on_floor() and player.global_position.y > 5.0:
+			break
+	await _wait(0.6)
+	print("[%s] route shaft bounces=%d top=%.2f end_y=%.2f floor=%s" % [tag, bounces, top, player.global_position.y, player.is_on_floor()])
+	player.forced_intent = {}
+
+func _routes_only() -> void:
+	# test rapide des parcours des deux arènes
+	await _wait(1.0)
+	route_trace = true
+	for z in 2:
+		pick_zone(z)
+		start_with(Data.WEAPON_ORDER[0])
+		await _wait(1.0)
+		player.hp = 1e9
+		up.max_hp = 1e9
+		_clear_round()
+		intermission = 999.0
+		if z == 0:
+			await _route_test("z1", Vector3(0, 0, 27), Vector3(10.0, 7.5, 30.3), -PI / 2, Vector3(-22, 0, -14), Vector3(-1, 0, 0))
+		else:
+			await _route_test("z2", Vector3(6, 0, -34), Vector3(20.3, 5.0, 11.0), PI, Vector3(0, 0, 30.5), Vector3(0, 0, -1))
+	pick_zone(0)
+	get_tree().quit()
+
 func _autotest() -> void:
 	print("AUTOTEST start")
 	if OS.get_environment("HB_SHOTS") != "":
@@ -1751,6 +1920,7 @@ func _autotest() -> void:
 	print("[run] wall jump vel=%s" % str(player.velocity))
 	player.forced_intent = {}
 	await _wait(1.0)
+	await _route_test("z1", Vector3(0, 0, 27), Vector3(10.0, 7.5, 30.3), -PI / 2, Vector3(-22, 0, -14), Vector3(-1, 0, 0))
 	# jump pad
 	var pad: Dictionary = city.pads[0]
 	player.global_position = pad.pos + Vector3(0, 0.1, 0)
@@ -1767,11 +1937,17 @@ func _autotest() -> void:
 	# rechargement + chargeur
 	player.global_position = Vector3(0, 0.1, 16)
 	_set_slow(false)
+	player.yaw = 0.0
+	player.pitch = 0.0
 	player.ammo = 2
 	player.reload_t = 0.0
 	player.start_reload()
-	await _wait(player.W.reload + 0.1)
-	var mags: Array = player.flying_mags()
+	var mags: Array = []
+	for k in int((player.W.reload + 0.2) * Engine.physics_ticks_per_second):
+		await get_tree().physics_frame
+		mags = player.flying_mags()
+		if mags.size() > 0 and mags[0].vel.y < 0.0:
+			break
 	print("[run] flying mags=%d" % mags.size())
 	if mags.size() > 0:
 		var d: Vector3 = mags[0].global_position - player.eye_position()
@@ -1850,6 +2026,19 @@ func _autotest() -> void:
 			player.shoot()
 			player.fire_cd = 0.0
 		print("[%s] ammo=%d wave=%d" % [w2, player.ammo, wave])
+		if player.W.has("recoil"):
+			# viser le sol et tirer : le recul fait décoller
+			player.global_position = Vector3(0, 0.1, 16)
+			player.velocity = Vector3.ZERO
+			await _wait(0.3)
+			player.pitch = -1.45
+			player.head.rotation.x = player.pitch
+			await get_tree().physics_frame
+			player.ammo = 2
+			player.fire_cd = 0.0
+			player.shoot()
+			await _wait(0.35)
+			print("[%s] recoil jump y=%.2f" % [w2, player.global_position.y])
 		player.hp = 1.0
 		player.iframes = 0.0
 		hurt_player(10)

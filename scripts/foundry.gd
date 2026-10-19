@@ -197,10 +197,35 @@ func _build_interior() -> void:
 	for c in [Vector3(16, 0, -30), Vector3(-16, 0, 30), Vector3(-30, 0, -14), Vector3(30, 0, 14)]:
 		_box(c + Vector3(0, 0.55, 0), Vector3(3.2, 1.1, 1.6), _steel(Color("5c6678"), 0.85, 0.3))
 		_box(c + Vector3(0, 1.4, 0), Vector3(2.4, 0.6, 1.2), _steel(Color("4a5466"), 0.85, 0.3))
+	_build_routes(steel, dark)
 	# socles des bras mécaniques
 	for a in [Vector3(-12, 0, -30), Vector3(12, 0, 30), Vector3(-30, 0, 12), Vector3(30, 0, -12)]:
 		anchors.append(a)
 		_cyl(a + Vector3(0, 0.05, 0), 1.4, 0.1, _neon(Color("4f7cff"), 1.5), false)
+
+func _build_routes(steel: Material, dark: Material) -> void:
+	# passerelles le long des murs nord (au-dessus des fourneaux) et sud : refuges pendant la coulée.
+	# Un trou au milieu de chacune, à franchir en courant sur le mur de la halle.
+	for s in [-1.0, 1.0]:
+		var y := 9.6 if s < 0.0 else 7.0
+		for x in [-1.0, 1.0]:
+			var cx: float = x * 12.5
+			_box(Vector3(cx, y - 0.25, s * 38.5), Vector3(19, 0.5, 3), _steel(Color("6a768a"), 0.7, 0.4))
+			_box(Vector3(cx, y + 0.02, s * 37.0), Vector3(19, 0.05, 0.12), _neon(SAFE, 2.2), false)
+			_box(Vector3(cx, y + 0.55, s * 37.05), Vector3(19, 0.06, 0.06), dark, false)
+			for k in 4:
+				_box(Vector3(cx - 7.5 + k * 5.0, y / 2.0, s * 37.3), Vector3(0.3, y, 0.3), dark, false)
+			_add_pad(Vector3(x * 6.0, 0, s * 34.0), Vector3(0, 0, s * 3.0), 21.5 if s < 0.0 else 18.0, Color("4f7cff"))
+			bonus_spots.append(Vector3(x * 14.0, y, s * 38.5))
+	# plaques d'acier suspendues : chaînes de wall run en diagonale de la halle
+	for s in [-1.0, 1.0]:
+		for k in 3:
+			var z: float = s * (14.5 + k * 6.0)
+			# chaque plaque est un peu en retrait de la précédente : on ne bute pas sur son bord en courant
+			var px: float = s * (21.0 + k * 0.3)
+			_run_panel(Vector3(px, 5.5, z), Vector3(0.4, 4.0, 5.0), SAFE, _steel(Color("7a879c"), 0.7, 0.35))
+			_box(Vector3(px, 13.5, z), Vector3(0.08, 12.0, 0.08), dark, false)
+	_shaft(Vector3(0, 0, 30.5), true, 8.5, SAFE, _steel(Color("6a768a"), 0.7, 0.4))
 
 func _press(pos: Vector3, rot_y: float, text: String) -> void:
 	var holder := StaticBody3D.new()

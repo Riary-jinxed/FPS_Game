@@ -14,7 +14,7 @@ const CHARACTERS := {
 		"id": "kade", "name": "Kade", "title": "Lame du Syndicat",
 		"blurb": "Ancien nettoyeur de la ville-système. Vit pour l'élan et les kills en l'air.",
 		"skill": "Surcharge", "skill_desc": "Le temps ralentit autour de toi : munitions infinies, +50 % de dégâts, +25 % de cadence.",
-		"weapons": ["rifle", "shotgun", "uzi"],
+		"weapons": ["jumeaux", "brise_porte", "verdict"],
 		"skill_time": 6.0,
 	},
 }
@@ -22,7 +22,7 @@ const CHARACTER_ORDER := ["kade"]
 
 # Arbre en flocon : 4 branches (Armes en haut, Compétence à droite, Survie en bas, Déplacement à gauche).
 # Chaque branche : un tronc de 2 nœuds, puis des sous-branches de 3 nœuds et une pointe (version améliorée).
-# Armes : une sous-branche par arme du perso, active seulement avec cette arme.
+# Armes : une sous-branche par arme unique du perso, active seulement avec cette arme.
 # On avance depuis le centre ; un run complet donne environ 22 points, on ne remplit jamais tout.
 # L'effet de chaque id est lu dans main.gd et player.gd (has_node).
 const TREE := {
@@ -31,21 +31,21 @@ const TREE := {
 			{ "id": "w_t1", "name": "Main lourde", "desc": "Un kill à bout portant recharge l'arme" },
 			{ "id": "w_t2", "name": "Chargeur piégé", "desc": "Les chargeurs tirés en vol explosent 40 % plus fort" },
 		], "subs": [
-			{ "name": "Jumeaux", "weapon": "uzi", "nodes": [
-				{ "id": "w_j1", "name": "Précision aérienne", "desc": "Dispersion divisée par deux en l'air" },
+			{ "name": "Jumeaux", "weapon": "jumeaux", "nodes": [
+				{ "id": "w_j1", "name": "Précision aérienne", "desc": "En l'air : aucune dispersion et +20 % de dégâts" },
 				{ "id": "w_j2", "name": "Dixième balle", "desc": "Une balle sur 10 ricoche sur un autre ennemi" },
-				{ "id": "w_j3", "name": "Mitraille murale", "desc": "+30 % de cadence en wall run" },
+				{ "id": "w_j3", "name": "Tir alterné", "desc": "+30 % de cadence en wall run" },
 				{ "id": "w_j4", "name": "Ballet", "desc": "En l'air, chaque balle qui touche frappe aussi un 2e ennemi", "ult": true },
 			] },
-			{ "name": "Brise-porte", "weapon": "shotgun", "nodes": [
-				{ "id": "w_b1", "name": "Cartouches en plus", "desc": "+2 cartouches par chargeur" },
-				{ "id": "w_b2", "name": "Recul propulsif", "desc": "Tirer en l'air vers le bas te propulse" },
-				{ "id": "w_b3", "name": "Rechargement brutal", "desc": "Un kill à bout portant rend 2 cartouches" },
+			{ "name": "Brise-porte", "weapon": "brise_porte", "nodes": [
+				{ "id": "w_b1", "name": "3e cartouche", "desc": "Une cartouche de plus (3 au lieu de 2)" },
+				{ "id": "w_b2", "name": "Recul blessant", "desc": "Le recul propulsif blesse les ennemis sur ta trajectoire" },
+				{ "id": "w_b3", "name": "Rechargement brutal", "desc": "Un kill à bout portant rend une cartouche" },
 				{ "id": "w_b4", "name": "Bélier", "desc": "Tirer en glissade repousse les ennemis touchés et fait +50 % de dégâts", "ult": true },
 			] },
-			{ "name": "Verdict", "weapon": "rifle", "nodes": [
-				{ "id": "w_v1", "name": "À la volée", "desc": "Un tir à la tête remet une balle dans le chargeur" },
-				{ "id": "w_v2", "name": "Exécution", "desc": "Un tir à la tête sur un ennemi sous 30 % de vie l'achève et rend 1 balle" },
+			{ "name": "Verdict", "weapon": "verdict", "nodes": [
+				{ "id": "w_v1", "name": "À la volée", "desc": "Un tir à la tête remet une balle dans le barillet" },
+				{ "id": "w_v2", "name": "Exécution rentable", "desc": "Une exécution rend une balle" },
 				{ "id": "w_v3", "name": "Sans appel", "desc": "Seuil d'exécution à 40 % de vie" },
 				{ "id": "w_v4", "name": "Sentence", "desc": "Une exécution fait exploser la cible", "ult": true },
 			] },
@@ -125,27 +125,54 @@ static func tree_nodes(char_id: String) -> Array:
 	return out
 
 # ---------- Armes ----------
+# Armes uniques (une par perso au choix au départ) et génériques (communes, au shop pendant le run).
+# model : modèle et animation de rechargement. Traits : dual (une arme dans chaque main),
+# air_precise (dispersion réduite en l'air), recoil (le tir propulse à l'opposé de la visée),
+# execute (un tir à la tête sur un ennemi affaibli l'achève, seuil en part de la vie).
 const WEAPONS := {
+	"jumeaux": {
+		"id": "jumeaux", "name": "Jumeaux", "model": "pistols", "dual": true, "air_precise": 0.35,
+		"mag": 24, "rate": 0.1, "dmg": 16.0, "pellets": 1, "spread": 0.02, "reload": 1.0, "kick": 0.01,
+		"sound": "pistol", "color": Color("4fc3ff"), "unique": true,
+		"blurb": "Pistolets jumelés à tir alterné. Très précis en l'air.",
+		"stats": [["Dégâts", "Moyens"], ["Cadence", "Rapide"], ["En l'air", "Précis"]],
+	},
+	"brise_porte": {
+		"id": "brise_porte", "name": "Brise-porte", "model": "sawed", "recoil": 11.0,
+		"mag": 2, "rate": 0.26, "dmg": 18.0, "pellets": 12, "spread": 0.09, "reload": 0.95, "kick": 0.08,
+		"sound": "blast", "color": Color("ff7a3d"), "unique": true,
+		"blurb": "Pompe court à 2 coups. Le recul te propulse : vise le sol pour t'envoler.",
+		"stats": [["Dégâts", "Énormes"], ["Coups", "2"], ["Recul", "Propulse"]],
+	},
+	"verdict": {
+		"id": "verdict", "name": "Verdict", "model": "revolver", "execute": 0.3,
+		"mag": 6, "rate": 0.42, "dmg": 75.0, "pellets": 1, "spread": 0.004, "reload": 1.5, "kick": 0.09,
+		"sound": "revolver", "color": Color("d6b4ff"), "unique": true,
+		"blurb": "Revolver lourd 6 coups. Un tir à la tête sur un ennemi sous 30 % de vie l'exécute.",
+		"stats": [["Dégâts", "Lourds"], ["Cadence", "Lente"], ["Tête", "Exécute"]],
+	},
 	"rifle": {
-		"id": "rifle", "name": "Fusil d'assaut", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,
+		"id": "rifle", "name": "Fusil d'assaut", "model": "rifle", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,
 		"spread": 0.012, "reload": 1.0, "kick": 0.012, "sound": "rifle", "color": Color("3fd0c9"),
 		"blurb": "Précis et régulier. Récompense les tirs à la tête.",
 		"stats": [["Dégâts", "Moyens"], ["Cadence", "Rapide"], ["Portée", "Longue"]],
 	},
 	"shotgun": {
-		"id": "shotgun", "name": "Fusil à pompe", "mag": 6, "rate": 0.6, "dmg": 16.0, "pellets": 9,
+		"id": "shotgun", "name": "Fusil à pompe", "model": "shotgun", "mag": 6, "rate": 0.6, "dmg": 16.0, "pellets": 9,
 		"spread": 0.07, "reload": 1.1, "kick": 0.05, "sound": "shotgun", "color": Color("ffc23d"),
 		"blurb": "Dévastateur au contact. Parfait pour les kills aériens.",
 		"stats": [["Dégâts", "Énormes"], ["Cadence", "Lente"], ["Portée", "Courte"]],
 	},
 	"uzi": {
-		"id": "uzi", "name": "Double uzi", "mag": 50, "rate": 0.045, "dmg": 11.0, "pellets": 1,
+		"id": "uzi", "name": "Double uzi", "model": "uzi", "dual": true, "mag": 50, "rate": 0.045, "dmg": 11.0, "pellets": 1,
 		"spread": 0.035, "reload": 0.9, "kick": 0.006, "sound": "uzi", "color": Color("ff4fa3"),
 		"blurb": "Un uzi dans chaque main. Une pluie de balles, un reload en double.",
 		"stats": [["Dégâts", "Faibles"], ["Cadence", "Folle"], ["Portée", "Moyenne"]],
 	},
 }
-const WEAPON_ORDER := ["rifle", "shotgun", "uzi"]
+const WEAPON_ORDER := ["jumeaux", "brise_porte", "verdict"]
+const GENERICS := ["rifle", "shotgun", "uzi"]
+const WEAPON_PRICE := 160
 
 # ---------- Déplacement ----------
 # Réglages du mouvement : accélération forte, freinage doux et élan conservé en l'air.
@@ -227,7 +254,7 @@ const RANKS := [["D", 0, 1.0], ["C", 80, 1.2], ["B", 200, 1.5], ["A", 380, 1.8],
 const BASE_UP := {
 	"speed": 1.0, "max_hp": 100.0, "lifesteal": 0.0, "roll_cd": 1.0, "jumps": 2, "pierce": 0, "crit": 2.0,
 	"explode": 0, "regen": 0.0, "last_shots": 0, "recoil_jump": 0, "ricochet": 0, "air_dmg": 0,
-	"slide_boost": 1.0, "style_mult": 1.0, "mag_boom": 1.0, "wallrun": 1.0, "skill_gain": 1.0, "skill_time": 0.0, "credit_mult": 1.0,
+	"slide_boost": 1.0, "style_mult": 1.0, "mag_boom": 1.0, "wallrun": 1.0, "skill_gain": 1.0, "skill_time": 0.0, "credit_mult": 1.0, "recoil_mult": 1.0,
 }
 
 # ---------- XP ----------
@@ -275,5 +302,11 @@ const AUGMENTS := [
 	{ "id": "u_ric", "weapon": "uzi", "name": "Ricochet", "desc": "30 % de chances qu'une balle rebondisse sur un ennemi proche", "max": 3 },
 	{ "id": "u_drum", "weapon": "uzi", "name": "Chargeurs tambour", "desc": "+50 % de balles par chargeur", "max": 2 },
 	{ "id": "u_air", "weapon": "uzi", "name": "Pluie de plomb", "desc": "+50 % de dégâts quand tu es en l'air", "max": 2 },
+	{ "id": "j_drum", "weapon": "jumeaux", "name": "Chargeurs longs", "desc": "+40 % de balles par chargeur", "max": 2 },
+	{ "id": "j_rate", "weapon": "jumeaux", "name": "Gâchettes jumelles", "desc": "+20 % de cadence de tir", "max": 3 },
+	{ "id": "b_pellets", "weapon": "brise_porte", "name": "Chevrotine lourde", "desc": "+4 plombs par tir", "max": 3 },
+	{ "id": "b_kick", "weapon": "brise_porte", "name": "Charge renforcée", "desc": "Le recul propulse 30 % plus fort", "max": 2 },
+	{ "id": "v_dmg", "weapon": "verdict", "name": "Balles de plomb", "desc": "+25 % de dégâts", "max": 3 },
+	{ "id": "v_speed", "weapon": "verdict", "name": "Chargeur rapide", "desc": "Recharge 30 % plus vite", "max": 2 },
 	{ "id": "u_frenzy", "weapon": "uzi", "name": "Frénésie", "desc": "+20 % de cadence de tir", "max": 3 },
 ]
