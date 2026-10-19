@@ -350,6 +350,9 @@ void fragment() {
 	lbl.skill = _label("SURCHARGE", 12, DIM, true); lbl.skill.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sk.add_child(lbl.skill)
 	bars.skill = _bar(COOL, 320, 6); sk.add_child(bars.skill)
+	lbl.gren = _label("GRENADE", 11, DIM, true); lbl.gren.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sk.add_child(lbl.gren)
+	bars.gren = _bar(Color("4fc3ff"), 200, 4); bars.gren.size_flags_horizontal = Control.SIZE_SHRINK_CENTER; sk.add_child(bars.gren)
 
 	var br := _corner(Control.PRESET_BOTTOM_RIGHT, true)
 	lbl.wname = _right(_caps("Fusil")); br.add_child(lbl.wname)
@@ -471,6 +474,9 @@ func update_hud(d: Dictionary) -> void:
 	bars.skill.value = d.skill_pct
 	lbl.skill.text = d.skill_txt
 	lbl.skill.add_theme_color_override("font_color", COOL if d.skill_ready else DIM)
+	bars.gren.value = d.gren_pct
+	lbl.gren.text = "%s  recharge %s" % [d.gren_txt, d.gren_rate]
+	lbl.gren.add_theme_color_override("font_color", Color("4fc3ff") if d.gren_ready else DIM)
 
 func set_mute(m: bool) -> void:
 	lbl.mute.text = "MUSIQUE COUPÉE (M)" if m else " "
@@ -504,7 +510,7 @@ func _build_menu() -> void:
 	keys.add_theme_constant_override("h_separation", 18)
 	for row in [["ZQSD / WASD", "Se déplacer"], ["Souris", "Viser, clic gauche pour tirer"], ["Espace", "Sauter, double saut, wall jump"],
 			["Shift", "Roulade invincible"], ["C", "Glissade en courant"], ["Contre un mur", "Saute et avance : wall run"],
-			["R", "Recharger, tire sur le chargeur en vol"], ["E · clic droit", "Compétence quand la jauge est pleine"], ["P · Échap", "Pause · M musique"],
+			["R", "Recharger, tire sur le chargeur en vol"], ["E · clic droit", "Compétence quand la jauge est pleine"], ["G · molette", "Grenade, se recharge plus vite avec un bon style"], ["P · Échap", "Pause · M musique"],
 			["Manette", "A saut, LB roulade, B glissade, X recharger, Y compétence, RT tirer"]]:
 		keys.add_child(_label(row[0], 12, WARN, true))
 		keys.add_child(_label(row[1], 12, INK, true))

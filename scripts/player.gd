@@ -324,6 +324,7 @@ func read_input(delta: float) -> Dictionary:
 		"slide": Input.is_action_just_pressed("slide"),
 		"reload": Input.is_action_just_pressed("reload"),
 		"skill": Input.is_action_just_pressed("skill"),
+		"grenade": Input.is_action_just_pressed("grenade"),
 		"fire": Input.is_action_pressed("fire"),
 	}
 
@@ -434,6 +435,7 @@ func simulate(it: Dictionary, delta: float) -> void:
 	if it.slide: slide()
 	if it.reload: start_reload()
 	if it.skill: game.activate_skill()
+	if it.get("grenade", false): game.throw_grenade()
 
 	# arme
 	fire_cd -= delta

@@ -38,6 +38,9 @@ var best := 0
 var best_wave := 0
 var pickups: Array = []
 var bonus_t := 12.0
+var gren_charges := 1           # grenades prêtes
+var gren_prog := 0.0            # recharge de la prochaine grenade (0 à 1)
+var grenades: Array = []        # grenades en vol { node, vel, life }
 var route_trace := false             # prochaine prime sur un point haut de l'arène
 var zone_idx := 0
 var start_zone := 0
@@ -149,6 +152,7 @@ func _setup_input() -> void:
 	add.call("reload", [KEY_R], -1, [JOY_BUTTON_X], [])
 	add.call("skill", [KEY_E, KEY_F], MOUSE_BUTTON_RIGHT, [JOY_BUTTON_Y], [])
 	add.call("fire", [], MOUSE_BUTTON_LEFT, [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]])
+	add.call("grenade", [KEY_G], MOUSE_BUTTON_MIDDLE, [JOY_BUTTON_RIGHT_SHOULDER], [])
 	add.call("pause", [KEY_ESCAPE, KEY_P], -1, [JOY_BUTTON_START], [])
 	add.call("mute", [KEY_M], -1, [], [])
 	add.call("pick_1", [KEY_1], -1, [], [])
@@ -282,6 +286,9 @@ func reset_game() -> void:
 	enemies.clear()
 	pickups.clear()
 	bonus_t = 12.0
+	gren_charges = 1
+	gren_prog = 0.0
+	grenades.clear()
 	boss = null
 	up = Data.BASE_UP.duplicate()
 	taken = {}
@@ -622,6 +629,7 @@ func _process(delta: float) -> void:
 			spawn_timer = maxf(0.3, 1.1 - wave * 0.05)
 	_update_pickups(delta)
 	_update_bonus(delta)
+	_update_grenades(delta)
 	_update_hud()
 
 func _update_pads(delta: float) -> void:
@@ -711,6 +719,9 @@ func _update_hud() -> void:
 		"credits": credits, "level": level, "xp_pct": 100.0 * xp / Data.xp_for_level(level), "points": points,
 		"skill_pct": 100.0 * skill_t / (Data.CHARACTERS[character].skill_time + up.skill_time) if skill_t > 0.0 else player.skill,
 		"skill_txt": skill_txt, "skill_ready": player.skill >= 100.0 or skill_t > 0.0,
+		"gren_txt": "%s  %s%s  · G" % [grenade().name.to_upper(), "● ".repeat(gren_charges), "○ ".repeat(gren_max() - gren_charges)],
+		"gren_pct": 100.0 if gren_charges >= gren_max() else 100.0 * gren_prog, "gren_ready": gren_charges > 0,
+		"gren_rate": "×%.1f" % gren_rate(),
 	})
 
 # ---------- Style ----------
@@ -826,6 +837,97 @@ func activate_skill() -> void:
 		for e in enemies.duplicate():
 			if is_instance_valid(e) and e.alive and e.center().distance_to(c) < 9.0:
 				damage_enemy(e, 50.0 + 6.0 * wave, e.center(), { "src": "boom" })
+
+# ---------- Grenade (consommable du perso) ----------
+func grenade() -> Dictionary:
+	return Data.CHARACTERS[character].grenade
+
+func gren_max() -> int:
+	return 2 if tree.has("s_g1") else 1
+
+func gren_rate() -> float:
+	# recharge plus rapide avec une bonne note de style : ×1 en D, ×2 en S, ×2,5 en SSS
+	return (1.0 + 0.25 * rank_idx()) * (1.25 if tree.has("s_t1") else 1.0)
+
+func throw_grenade() -> void:
+	if state != "play":
+		return
+	if gren_charges <= 0:
+		sfx.play("deny")
+		return
+	gren_charges -= 1
+	var G := grenade()
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new(); sm.radius = 0.16; sm.height = 0.32
+	mi.mesh = sm
+	mi.material_override = _unshaded(Color(G.color), 4.0)
+	world.add_child(mi)
+	var fwd: Vector3 = -player.head.global_transform.basis.z
+	mi.global_position = player.eye_position() + fwd * 0.6
+	var v: Vector3 = fwd * 24.0 + Vector3(0, 3.5, 0) + player.velocity * 0.4
+	grenades.append({ "node": mi, "vel": v, "life": 2.5 })
+	sfx.play("dash")
+
+func _update_grenades(delta: float) -> void:
+	if gren_charges < gren_max():
+		gren_prog += delta * gren_rate() / grenade().cd
+		if gren_prog >= 1.0:
+			gren_charges += 1
+			gren_prog = 0.0
+			sfx.play("ping")
+	else:
+		gren_prog = 0.0
+	var space := get_world_3d().direct_space_state
+	for g in grenades.duplicate():
+		var n: Node3D = g.node
+		g.vel.y -= 22.0 * delta
+		g.life -= delta
+		var a := n.global_position
+		var b: Vector3 = a + g.vel * delta
+		var q := PhysicsRayQueryParameters3D.create(a, b, 1 | 2)
+		var hit := space.intersect_ray(q)
+		if hit or g.life <= 0.0:
+			var p: Vector3 = hit.position + hit.normal * 0.2 if hit else a
+			grenades.erase(g)
+			n.queue_free()
+			_grenade_blast(p, 1.0)
+		else:
+			n.global_position = b
+
+func _grenade_blast(p: Vector3, scale: float) -> void:
+	var G := grenade()
+	var r: float = G.radius * (1.4 if tree.has("s_g2") else 1.0) * scale
+	var col := Color(G.color)
+	shockwave(p, col, r)
+	burst(p, col, int(30 * scale), 13.0)
+	sfx.play("boom")
+	shake = maxf(shake, 0.7 * scale)
+	var dmg: float = (G.dmg + 9.0 * wave) * scale
+	var hits := 0
+	for e in enemies.duplicate():
+		if is_instance_valid(e) and e.alive and e.center().distance_to(p) < r + e.T.r:
+			var away: Vector3 = e.global_position - p
+			damage_enemy(e, dmg * 1.5 if e.is_boss else dmg, e.center(), { "src": "boom" })
+			knockback(e, Vector3(away.x, 0, away.z), 3.0 * scale)
+			hits += 1
+	if hits > 0 and scale >= 1.0:
+		add_style("IMPULSION" if hits < 3 else "IMPULSION ×%d" % hits, 20.0 * hits)
+	# grenade jump : le souffle propulse le joueur, sans le blesser
+	var pc: Vector3 = player.global_position + Vector3(0, 0.9, 0)
+	if scale >= 1.0 and pc.distance_to(p) < r * 0.9:
+		var push := pc - p
+		push.y = 0.0
+		var hv := push.normalized() * 7.0 if push.length() > 0.2 else Vector3.ZERO
+		player.velocity = Vector3(player.velocity.x + hv.x, maxf(player.velocity.y, 0.0) + 13.0, player.velocity.z + hv.z)
+		player.jumps = 1
+		add_style("ENVOL", 25.0)
+	if tree.has("s_g4") and scale >= 1.0:
+		# Fragmentation : 5 éclats qui retombent autour et explosent à leur tour
+		for k in 5:
+			var a := k * TAU / 5.0 + randf() * 0.4
+			var to := p + Vector3(cos(a), 0, sin(a)) * r * randf_range(0.8, 1.3)
+			to.y = maxf(0.3, p.y - 0.5)
+			get_tree().create_timer(0.3 + k * 0.06, false).timeout.connect(func(): _grenade_blast(to, 0.45))
 
 # ---------- Combat ----------
 func hurt_player(d: float, unavoidable := false) -> bool:
@@ -1007,6 +1109,8 @@ func _tree_on_kill(en, c: Vector3, ctx: Dictionary, aerial: bool) -> void:
 		player.ammo = mini(player.W.mag, player.ammo + 1)
 	if close and tree.has("v_r2"):
 		player.hp = minf(up.max_hp, player.hp + 4.0 * leech)
+	if aerial and tree.has("s_g3"):
+		gren_prog += 2.0 / grenade().cd
 	if aerial and tree.has("v_t2"):
 		player.hp = minf(up.max_hp, player.hp + 5.0 * leech)
 	if ctx.get("head", false) and tree.has("v_s2"):
@@ -1620,7 +1724,7 @@ func _showcase() -> void:
 	await _wait(0.1)
 	await _shot("collapse")
 	# écran de l'arbre en flocon, avec quelques nœuds pris
-	for id in ["w_t1", "w_t2", "w_v1", "s_t1", "s_t2", "s_d1", "v_t1", "m_t1", "m_t2", "m_a1", "m_a2"]:
+	for id in ["w_t1", "w_t2", "w_v1", "s_t1", "s_t2", "s_d1", "s_g1", "v_t1", "m_t1", "m_t2", "m_a1", "m_a2"]:
 		tree[id] = true
 	state = "between"; screen = "tree"; points = 4; level = 12
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -1820,6 +1924,57 @@ func _nearest_pad(p: Vector3) -> Dictionary:
 			best = pad
 	return best
 
+func _grenade_test() -> void:
+	# grenade : dégâts + recul sur un ennemi, grenade jump, recharge plus rapide avec une haute note
+	_clear_round()
+	intermission = 999.0
+	player.forced_intent = { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	player.global_position = Vector3(0, 0.1, 16)
+	player.velocity = Vector3.ZERO
+	player.yaw = 0.0
+	player.pitch = -0.15
+	spawn_enemy("brute", 1.0)
+	var e = enemies[-1]
+	e.spawn_t = 0.0
+	e.global_position = Vector3(0, 0.05, 8)
+	spawn_enemy("brute", 1.0)          # témoin loin du joueur : le round ne se termine pas pendant le test
+	enemies[-1].spawn_t = 0.0
+	enemies[-1].global_position = Vector3(-34, 0.05, -34)
+	enemy_slow = 0.0
+	await _wait(0.3)
+	var hp0: float = e.hp
+	var z0: float = e.global_position.z
+	gren_charges = 1
+	throw_grenade()
+	await _wait(0.8)
+	print("[gren] hit dmg=%.0f pushed=%.1f charges=%d" % [hp0 - e.hp, z0 - e.global_position.z, gren_charges])
+	# grenade jump : on la lance à ses pieds
+	await _wait(0.5)
+	player.pitch = -1.45
+	player.head.rotation.x = player.pitch
+	await get_tree().physics_frame
+	gren_charges = 1
+	var y0: float = player.global_position.y
+	throw_grenade()
+	var top := y0
+	for k in 60:
+		await get_tree().physics_frame
+		top = maxf(top, player.global_position.y)
+	print("[gren] grenade jump height=%.2f" % (top - y0))
+	# recharge : D contre S
+	gren_charges = 0; gren_prog = 0.0
+	style = 0.0
+	var r_low := gren_rate()
+	style = Data.RANKS[4][1]
+	print("[gren] recharge D=%.1fs S=%.1fs" % [grenade().cd / r_low, grenade().cd / gren_rate()])
+	style = 0.0
+	gren_charges = 1
+	player.pitch = 0.0
+	player.forced_intent = {}
+	enemy_slow = 1.0
+	_clear_round()
+	intermission = 1.0
+
 func _route_test(tag: String, pad_at: Vector3, run_from: Vector3, run_yaw: float, shaft_mid: Vector3, shaft_n: Vector3) -> void:
 	# parcours : jump pad vers la passerelle, wall run sur un panneau, montée d'un puits en wall jumps
 	var idle := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
@@ -1921,6 +2076,7 @@ func _autotest() -> void:
 	player.forced_intent = {}
 	await _wait(1.0)
 	await _route_test("z1", Vector3(0, 0, 27), Vector3(10.0, 7.5, 30.3), -PI / 2, Vector3(-22, 0, -14), Vector3(-1, 0, 0))
+	await _grenade_test()
 	# jump pad
 	var pad: Dictionary = city.pads[0]
 	player.global_position = pad.pos + Vector3(0, 0.1, 0)

@@ -16,6 +16,9 @@ const CHARACTERS := {
 		"skill": "Surcharge", "skill_desc": "Le temps ralentit autour de toi : munitions infinies, +50 % de dégâts, +25 % de cadence.",
 		"weapons": ["jumeaux", "brise_porte", "verdict"],
 		"skill_time": 6.0,
+		# consommable : se recharge avec le temps, plus vite quand la note de style est haute
+		"grenade": { "name": "Impulsion", "desc": "Grenade à impact : souffle les ennemis et te propulse si tu es dans l'explosion.",
+			"cd": 15.0, "dmg": 80.0, "radius": 5.0, "color": "4fc3ff" },
 	},
 }
 const CHARACTER_ORDER := ["kade"]
@@ -51,7 +54,7 @@ const TREE := {
 			] },
 		] },
 		{ "id": "s", "name": "Compétence", "dir": Vector2(1, 0), "trunk": [
-			{ "id": "s_t1", "name": "Batterie", "desc": "La jauge de Surcharge se remplit 25 % plus vite" },
+			{ "id": "s_t1", "name": "Batterie", "desc": "La jauge de Surcharge se remplit 25 % plus vite, et la grenade se recharge 25 % plus vite" },
 			{ "id": "s_t2", "name": "Prolongation", "desc": "Surcharge dure 2 s de plus" },
 		], "subs": [
 			{ "name": "Ralenti", "nodes": [
@@ -65,6 +68,12 @@ const TREE := {
 				{ "id": "s_d2", "name": "Rafale de lames", "desc": "En Surcharge, un chargeur touché se divise en 3" },
 				{ "id": "s_d3", "name": "Écho", "desc": "5 kills pendant Surcharge rendent la moitié de la jauge" },
 				{ "id": "s_d4", "name": "Tempête", "desc": "Surcharge se relance gratuitement une fois dans les 10 s qui suivent", "ult": true },
+			] },
+			{ "name": "Impulsion", "nodes": [
+				{ "id": "s_g1", "name": "Double charge", "desc": "Deux grenades en réserve" },
+				{ "id": "s_g2", "name": "Gros souffle", "desc": "Rayon d'explosion +40 %" },
+				{ "id": "s_g3", "name": "Main leste", "desc": "Chaque kill en l'air ou sur un mur avance la recharge de la grenade de 2 s" },
+				{ "id": "s_g4", "name": "Fragmentation", "desc": "L'explosion projette 5 éclats qui explosent à leur tour", "ult": true },
 			] },
 		] },
 		{ "id": "v", "name": "Survie", "dir": Vector2(0, 1), "trunk": [
