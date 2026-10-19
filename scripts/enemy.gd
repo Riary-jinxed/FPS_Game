@@ -1,5 +1,5 @@
 # Ennemis et boss. Le corps est une boîte de collision (calque 2), le visuel est construit en code.
-# Chaque type a son comportement (T.ai) : walk, ranged, drone, kamikaze, sniper, hacker. Les boss ont un pattern.
+# Chaque type a son comportement (T.ai) : walk, ranged, drone, kamikaze, sniper, hacker, furnace, arm. Les boss ont un pattern.
 # Le temps des ennemis est multiplié par game.enemy_slow (ralenti pendant la Surcharge).
 extends CharacterBody3D
 
@@ -36,6 +36,10 @@ var ring: MeshInstance3D
 var laser: MeshInstance3D
 var laser_mat: StandardMaterial3D
 var legs: Array[Node3D] = []
+var boom: Node3D               # bras mécanique : flèche qui tourne
+var arm_angle := 0.0
+var reformed := false          # golem : déjà reformé une fois
+var reform_t := 0.0
 
 func setup(g, tname: String, t: Dictionary, mult: float, boss_def := {}) -> void:
 	game = g
@@ -143,7 +147,7 @@ func _build_visual() -> void:
 	var mid := _mat(T.color.darkened(0.35))
 	var kind: String = T.ai
 	if is_boss:
-		kind = "titan" if B.pattern == "titan" else "hacker"
+		kind = { "titan": "titan", "glitch": "hacker", "foreman": "furnace", "forge": "forge" }[B.pattern]
 	match kind:
 		"drone":
 			_box(Vector3(r * 1.8, h * 0.45, r * 1.8), Vector3(0, h * 0.5, 0), dark)
@@ -189,10 +193,62 @@ func _build_visual() -> void:
 				_box(Vector3(r * 0.5, h * 0.45, r * 0.5), Vector3(s * r * 1.35, h * 0.55, 0), dark)
 				_box(Vector3(r * 0.52, h * 0.03, r * 0.52), Vector3(s * r * 1.35, h * 0.4, 0), glow)
 			_add_legs(r, h, dark)
+		"furnace":
+			# ouvrier-fournaise : torse trapu, ventre de fournaise lumineux, cheminée dans le dos, louche
+			_box(Vector3(r * 1.7, h * 0.46, r * 1.2), Vector3(0, h * 0.6, 0), dark)
+			_box(Vector3(r * 0.9, h * 0.2, 0.06), Vector3(0, h * 0.55, -r * 0.62), glow)
+			_box(Vector3(r * 1.0, h * 0.2, r * 1.0), Vector3(0, h * 0.93, 0), mid)
+			_box(Vector3(r * 0.85, h * 0.06, 0.04), Vector3(0, h * 0.94, -r * 0.52), glow)
+			_box(Vector3(r * 0.4, h * 0.45, r * 0.4), Vector3(r * 0.35, h * 0.95, r * 0.6), mid)
+			_box(Vector3(r * 0.42, h * 0.05, r * 0.42), Vector3(r * 0.35, h * 1.18, r * 0.6), glow)
+			for s in [-1.0, 1.0]:
+				_box(Vector3(r * 0.45, h * 0.4, r * 0.45), Vector3(s * r * 1.1, h * 0.55, 0), mid)
+			_box(Vector3(0.06, 0.06, r * 1.2), Vector3(r * 1.1, h * 0.36, -r * 0.5), mid)
+			_box(Vector3(r * 0.5, r * 0.3, r * 0.5), Vector3(r * 1.1, h * 0.34, -r * 1.1), glow)
+			_add_legs(r, h, mid)
+		"arm":
+			# bras mécanique : socle fixe, tourelle, longue flèche qui balaie à hauteur de jambes
+			_box(Vector3(r * 2.2, h * 0.3, r * 2.2), Vector3(0, h * 0.15, 0), dark)
+			_box(Vector3(r * 1.3, h * 0.5, r * 1.3), Vector3(0, h * 0.55, 0), mid)
+			_box(Vector3(r * 1.35, 0.06, r * 1.35), Vector3(0, h * 0.3, 0), glow)
+			boom = Node3D.new()
+			boom.position.y = h * 0.55
+			visual.add_child(boom)
+			var reach: float = T.get("reach", 6.5)
+			_box(Vector3(0.4, 0.4, reach), Vector3(0, 0, -reach / 2.0), mid, boom)
+			_box(Vector3(0.08, 0.1, reach - 0.6), Vector3(0, 0.22, -reach / 2.0), glow, boom)
+			_box(Vector3(0.7, 0.6, 0.5), Vector3(0, 0, -reach), dark, boom)
+			_box(Vector3(0.5, 0.2, 0.08), Vector3(0, 0, -reach - 0.27), glow, boom)
+		"forge":
+			# Haut-Fourneau : fournaise sur pattes, gueule lumineuse, deux cheminées, bras-louches
+			_box(Vector3(r * 1.8, h * 0.5, r * 1.5), Vector3(0, h * 0.6, 0), dark)
+			_box(Vector3(r * 1.0, h * 0.2, 0.08), Vector3(0, h * 0.58, -r * 0.76), glow)
+			for k in 4:
+				_box(Vector3(0.12, h * 0.2, 0.1), Vector3(-r * 0.36 + k * r * 0.24, h * 0.58, -r * 0.8), dark)
+			_box(Vector3(r * 2.1, h * 0.08, r * 1.7), Vector3(0, h * 0.86, 0), mid)
+			for s in [-1.0, 1.0]:
+				_box(Vector3(r * 0.4, h * 0.35, r * 0.4), Vector3(s * r * 0.55, h * 1.05, r * 0.3), mid)
+				_box(Vector3(r * 0.42, h * 0.03, r * 0.42), Vector3(s * r * 0.55, h * 1.23, r * 0.3), glow)
+				_box(Vector3(r * 0.45, h * 0.4, r * 0.45), Vector3(s * r * 1.2, h * 0.58, 0), mid)
+				_box(Vector3(r * 0.6, r * 0.35, r * 0.6), Vector3(s * r * 1.2, h * 0.32, -r * 0.2), glow)
+			_add_legs(r, h, dark)
 		_:
 			# humanoïdes : silhouette propre à chaque type pour les reconnaître de loin
 			var torso_y := h * 0.6
 			match type_name:
+				"golem":
+					# blocs de scories empilés de travers, fissures lumineuses
+					var rng := RandomNumberGenerator.new()
+					rng.seed = int(hop_seed * 1000.0)
+					for k in 7:
+						var sz := Vector3(rng.randf_range(0.7, 1.1) * r, rng.randf_range(0.25, 0.4) * h, rng.randf_range(0.7, 1.1) * r)
+						var b := _box(sz, Vector3(rng.randf_range(-0.2, 0.2) * r, h * (0.35 + k * 0.09), rng.randf_range(-0.2, 0.2) * r), dark if k % 2 == 0 else mid)
+						b.rotation = Vector3(rng.randf_range(-0.3, 0.3), rng.randf_range(0, TAU), rng.randf_range(-0.3, 0.3))
+					_box(Vector3(r * 1.5, 0.05, r * 1.3), Vector3(0, h * 0.62, 0), glow)
+					_box(Vector3(r * 0.6, h * 0.05, 0.04), Vector3(0, h * 0.95, -r * 0.62), glow)
+					for s in [-1.0, 1.0]:
+						_box(Vector3(r * 0.55, h * 0.45, r * 0.55), Vector3(s * r * 1.15, h * 0.5, 0), dark)
+						_box(Vector3(r * 0.56, 0.05, r * 0.56), Vector3(s * r * 1.15, h * 0.4, 0), glow)
 				"runner":
 					# petit, penché en avant, crête sur la tête
 					var body := _box(Vector3(r * 1.2, h * 0.36, r * 1.2), Vector3(0, h * 0.6, 0.05), dark)
@@ -276,7 +332,15 @@ func _physics_process(delta: float) -> void:
 		spawn_t -= d
 		visual.scale = Vector3.ONE * clampf(1.0 - maxf(spawn_t, 0.0) * (1.0 if is_boss else 2.0), 0.05, 1.0)
 		return
-	visual.scale = Vector3.ONE
+	if reform_t > 0.0:
+		# golem brisé : il se reforme sur place, intouchable
+		reform_t -= d
+		var k := clampf(1.0 - reform_t / 1.8, 0.0, 1.0)
+		visual.scale = Vector3(0.85, 0.2 + 0.65 * k, 0.85)
+		velocity = Vector3(0, -0.5, 0)
+		move_and_slide()
+		return
+	visual.scale = Vector3.ONE * (0.85 if reformed else 1.0)
 	var p = game.player
 	var to: Vector3 = p.global_position - global_position
 	to.y = 0.0
@@ -285,7 +349,7 @@ func _physics_process(delta: float) -> void:
 	var want := atan2(-dir.x, -dir.z)
 	if T.get("shield", false):
 		facing = rotate_toward(facing, want, 2.0 * d)
-	else:
+	elif T.ai != "arm":
 		facing = want
 	visual.rotation.y = facing
 	if is_boss:
@@ -296,6 +360,8 @@ func _physics_process(delta: float) -> void:
 			"kamikaze": _kamikaze(d)
 			"sniper": _sniper(d)
 			"hacker": _hacker(dist, dir, d)
+			"furnace": _furnace(dist, dir, d)
+			"arm": _arm(d)
 			_: _walk(dist, dir, d)
 	if not T.get("fly", false):
 		velocity.y = -0.5 if is_on_floor() else velocity.y - 24.0 * delta
@@ -328,6 +394,13 @@ func _animate(d: float) -> void:
 		halo.rotation.y += d * 3.0
 		halo.scale = Vector3.ONE * (1.0 + cast_t * 1.4)
 
+func start_reform() -> void:
+	reformed = true
+	hp = max_hp * 0.6
+	reform_t = 1.8
+	edge.albedo_color = T.color.darkened(0.25)
+	glow.emission_energy_multiplier = 1.6
+
 func _move(dir: Vector3, spd: float) -> void:
 	velocity.x = dir.x * spd * game.enemy_slow
 	velocity.z = dir.z * spd * game.enemy_slow
@@ -358,6 +431,32 @@ func _walk(dist: float, dir: Vector3, d: float) -> void:
 		if shoot_cd <= 0.0 and dist < 30.0:
 			_shoot_at_player(global_position + Vector3(0, T.h * 0.9, 0), 16.0, T.dmg, T.color)
 			shoot_cd = 2.0 + randf() * 1.5
+
+func _furnace(dist: float, dir: Vector3, d: float) -> void:
+	# fonce au corps à corps et sème des flaques de métal en fusion derrière lui
+	_walk(dist, dir, d)
+	ability_cd -= d
+	if ability_cd <= 0.0 and dist < 26.0:
+		game.add_puddle(global_position, 1.5, 6.0, 16.0)
+		ability_cd = 2.2 + randf() * 1.2
+
+func _arm(d: float) -> void:
+	# balaie en cercle autour du socle, à hauteur de jambes : on saute par-dessus ou on roule
+	_move(Vector3.ZERO, 0.0)
+	arm_angle = wrapf(arm_angle + d * 1.5, -PI, PI)
+	boom.rotation.y = arm_angle
+	atk_cd -= d
+	var p = game.player
+	var rel: Vector3 = p.global_position - global_position
+	var hd := Vector2(rel.x, rel.z).length()
+	var reach: float = T.get("reach", 6.5)
+	if atk_cd > 0.0 or hd > reach + 0.4 or hd < 0.4 or rel.y > 1.2:
+		return
+	var ang := atan2(-rel.x, -rel.z)
+	if absf(angle_difference(arm_angle, ang)) < atan(0.7 / hd) + 0.04:
+		if game.hurt_player(T.dmg):
+			game.burst(p.global_position + Vector3(0, 0.5, 0), T.color, 8, 6.0)
+		atk_cd = 0.7
 
 func _drone(d: float) -> void:
 	# tourne autour du joueur en hauteur et tire
@@ -467,7 +566,7 @@ func _hacker(dist: float, dir: Vector3, d: float) -> void:
 
 func _teleport() -> void:
 	game.burst(center(), T.color, 14, 6.0)
-	global_position = game.spawn_pos(14.0)
+	global_position = game.spawn_pos(14.0, false, T.r, T.h)
 	game.burst(center(), T.color, 14, 6.0)
 	game.sfx.play("dash")
 
@@ -478,10 +577,11 @@ func _boss_ai(dist: float, dir: Vector3, d: float) -> void:
 		phase2 = true
 		speed *= 1.3
 		game.boss_phase2(self)
-	if B.pattern == "glitch":
-		_brouilleur(dist, dir, d)
-	else:
-		_titan(dist, dir, d)
+	match B.pattern:
+		"glitch": _brouilleur(dist, dir, d)
+		"foreman": _foreman(dist, dir, d)
+		"forge": _forge(dist, dir, d)
+		_: _titan(dist, dir, d)
 
 func _fan(n: int, spread: float, spd: float, dmg: float, size: float) -> void:
 	var p = game.player
@@ -554,7 +654,8 @@ func _titan(dist: float, dir: Vector3, d: float) -> void:
 					game.fire_shot(Vector3(global_position.x, 0.5, global_position.z), Vector3(cos(a), 0, sin(a)), 13.0, 18.0, T.color, 0.4)
 				var hop: Vector3 = (game.player.global_position - global_position) * 0.35
 				hop.y = 0.0
-				global_position += hop
+				if game.is_free(global_position + hop, T.r, T.h):
+					global_position += hop
 				game.shake = 0.8
 				game.sfx.play("boss")
 			_:
@@ -564,3 +665,63 @@ func _titan(dist: float, dir: Vector3, d: float) -> void:
 				sweep = { "t": 0.0, "next": 0.0, "dir": side, "a0": base - side * 1.5 }
 				game.sfx.play("charge")
 		ability_cd = 3.5 if phase2 else 5.5
+
+func _lob(n: int, radius: float, dmg: float) -> void:
+	# globes de métal lancés en cloche : un cercle d'alerte, puis une flaque
+	var p = game.player
+	for k in n:
+		var off := Vector3.ZERO
+		if k > 0:
+			var a := randf() * TAU
+			off = Vector3(cos(a), 0, sin(a)) * randf_range(2.5, 7.0)
+		var at: Vector3 = p.global_position + off
+		at.y = 0.0
+		game.add_puddle(at, radius, 6.0, dmg, 1.1)
+	game.sfx.play("orb")
+
+func _foreman(dist: float, dir: Vector3, d: float) -> void:
+	# mini-boss : un ouvrier-fournaise géant. Pluie de métal, renforts, onde de coulée.
+	_move(dir, speed if dist > 12.0 else 0.0)
+	_contact(dist, d)
+	shoot_cd -= d
+	ability_cd -= d
+	if shoot_cd <= 0.0:
+		_fan(5 if phase2 else 3, 0.12, 20.0, 11.0, 0.32)
+		shoot_cd = 1.0 if phase2 else 1.6
+	if ability_cd <= 0.0:
+		ability_n += 1
+		match ability_n % 3:
+			1: _lob(8 if phase2 else 5, 2.2, 20.0)
+			2:
+				for k in (5 if phase2 else 3):
+					game.to_spawn.append("furnace")
+				game.spawn_timer = 0.0
+				game.hud.banner("Renforts", "Ouvriers-fournaise")
+			_:
+				game.add_ring(global_position, 9.0, 24.0, 16.0)
+		ability_cd = 3.5 if phase2 else 5.0
+
+func _forge(dist: float, dir: Vector3, d: float) -> void:
+	# boss de zone : ondes de coulée à sauter, pluie de métal, golems. Sa phase 2 inonde la halle.
+	_move(dir, speed if dist > 16.0 else 0.0)
+	_contact(dist, d)
+	shoot_cd -= d
+	ability_cd -= d
+	if shoot_cd <= 0.0:
+		_fan(7 if phase2 else 5, 0.1, 21.0, 12.0, 0.35)
+		shoot_cd = 1.1 if phase2 else 1.8
+	if ability_cd <= 0.0:
+		ability_n += 1
+		match ability_n % 3:
+			1:
+				game.add_ring(global_position, 10.0, 34.0, 18.0)
+				if phase2:
+					game.add_ring(global_position, 10.0, 34.0, 18.0, 0.7)
+				game.shake = 0.6
+				game.sfx.play("boss")
+			2: _lob(9 if phase2 else 6, 2.4, 22.0)
+			_:
+				for k in (4 if phase2 else 3):
+					game.to_spawn.append("golem" if k % 2 == 0 else "furnace")
+				game.spawn_timer = 0.0
+		ability_cd = 3.6 if phase2 else 5.2

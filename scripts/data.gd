@@ -20,29 +20,109 @@ const CHARACTERS := {
 }
 const CHARACTER_ORDER := ["kade"]
 
-# L'arbre se remplit avec les points de niveau, entre deux rounds. 3 branches, le dernier nœud est la version améliorée.
+# Arbre en flocon : 4 branches (Armes en haut, Compétence à droite, Survie en bas, Déplacement à gauche).
+# Chaque branche : un tronc de 2 nœuds, puis des sous-branches de 3 nœuds et une pointe (version améliorée).
+# Armes : une sous-branche par arme du perso, active seulement avec cette arme.
+# On avance depuis le centre ; un run complet donne environ 22 points, on ne remplit jamais tout.
+# L'effet de chaque id est lu dans main.gd et player.gd (has_node).
 const TREE := {
 	"kade": [
-		{ "branch": "Surcharge", "nodes": [
-			{ "id": "s1", "name": "Batterie", "desc": "La jauge de Surcharge se remplit 25 % plus vite" },
-			{ "id": "s2", "name": "Prolongation", "desc": "Surcharge dure 2 s de plus" },
-			{ "id": "s3", "name": "Onde de choc", "desc": "Activer Surcharge souffle et blesse les ennemis proches" },
-			{ "id": "s4", "name": "Surcharge+", "desc": "Chaque kill en Surcharge la prolonge de 0,5 s", "ult": true },
+		{ "id": "w", "name": "Armes", "dir": Vector2(0, -1), "trunk": [
+			{ "id": "w_t1", "name": "Main lourde", "desc": "Un kill à bout portant recharge l'arme" },
+			{ "id": "w_t2", "name": "Chargeur piégé", "desc": "Les chargeurs tirés en vol explosent 40 % plus fort" },
+		], "subs": [
+			{ "name": "Jumeaux", "weapon": "uzi", "nodes": [
+				{ "id": "w_j1", "name": "Précision aérienne", "desc": "Dispersion divisée par deux en l'air" },
+				{ "id": "w_j2", "name": "Dixième balle", "desc": "Une balle sur 10 ricoche sur un autre ennemi" },
+				{ "id": "w_j3", "name": "Mitraille murale", "desc": "+30 % de cadence en wall run" },
+				{ "id": "w_j4", "name": "Ballet", "desc": "En l'air, chaque balle qui touche frappe aussi un 2e ennemi", "ult": true },
+			] },
+			{ "name": "Brise-porte", "weapon": "shotgun", "nodes": [
+				{ "id": "w_b1", "name": "Cartouches en plus", "desc": "+2 cartouches par chargeur" },
+				{ "id": "w_b2", "name": "Recul propulsif", "desc": "Tirer en l'air vers le bas te propulse" },
+				{ "id": "w_b3", "name": "Rechargement brutal", "desc": "Un kill à bout portant rend 2 cartouches" },
+				{ "id": "w_b4", "name": "Bélier", "desc": "Tirer en glissade repousse les ennemis touchés et fait +50 % de dégâts", "ult": true },
+			] },
+			{ "name": "Verdict", "weapon": "rifle", "nodes": [
+				{ "id": "w_v1", "name": "À la volée", "desc": "Un tir à la tête remet une balle dans le chargeur" },
+				{ "id": "w_v2", "name": "Exécution", "desc": "Un tir à la tête sur un ennemi sous 30 % de vie l'achève et rend 1 balle" },
+				{ "id": "w_v3", "name": "Sans appel", "desc": "Seuil d'exécution à 40 % de vie" },
+				{ "id": "w_v4", "name": "Sentence", "desc": "Une exécution fait exploser la cible", "ult": true },
+			] },
 		] },
-		{ "branch": "Armes", "nodes": [
-			{ "id": "w1", "name": "Calibre", "desc": "+12 % de dégâts" },
-			{ "id": "w2", "name": "Doigts agiles", "desc": "Recharge 15 % plus vite" },
-			{ "id": "w3", "name": "Chargeur piégé", "desc": "Les chargeurs tirés en vol explosent 40 % plus fort" },
-			{ "id": "w4", "name": "Pluie d'acier", "desc": "Un chargeur touché se divise en 3 et frappe 3 ennemis", "ult": true },
+		{ "id": "s", "name": "Compétence", "dir": Vector2(1, 0), "trunk": [
+			{ "id": "s_t1", "name": "Batterie", "desc": "La jauge de Surcharge se remplit 25 % plus vite" },
+			{ "id": "s_t2", "name": "Prolongation", "desc": "Surcharge dure 2 s de plus" },
+		], "subs": [
+			{ "name": "Ralenti", "nodes": [
+				{ "id": "s_r1", "name": "Temps mort", "desc": "Le ralenti de Surcharge est plus fort" },
+				{ "id": "s_r2", "name": "Sang-froid", "desc": "Aucun dégât pendant la 1re seconde de Surcharge" },
+				{ "id": "s_r3", "name": "Chasseur", "desc": "Chaque kill en Surcharge la prolonge de 0,5 s" },
+				{ "id": "s_r4", "name": "Exécution", "desc": "À la fin de Surcharge, chaque ennemi touché pendant prend un gros coup", "ult": true },
+			] },
+			{ "name": "Déchaînement", "nodes": [
+				{ "id": "s_d1", "name": "Onde de choc", "desc": "Activer Surcharge souffle et blesse les ennemis proches" },
+				{ "id": "s_d2", "name": "Rafale de lames", "desc": "En Surcharge, un chargeur touché se divise en 3" },
+				{ "id": "s_d3", "name": "Écho", "desc": "5 kills pendant Surcharge rendent la moitié de la jauge" },
+				{ "id": "s_d4", "name": "Tempête", "desc": "Surcharge se relance gratuitement une fois dans les 10 s qui suivent", "ult": true },
+			] },
 		] },
-		{ "branch": "Mobilité", "nodes": [
-			{ "id": "m1", "name": "Coureur de murs", "desc": "Le wall run dure 50 % plus longtemps" },
-			{ "id": "m2", "name": "Réflexes", "desc": "La roulade se recharge 20 % plus vite" },
-			{ "id": "m3", "name": "Élan", "desc": "+8 % de vitesse, glissade plus puissante" },
-			{ "id": "m4", "name": "Danse murale", "desc": "Un kill en l'air ou sur un mur recharge la roulade et rapporte +50 % de style", "ult": true },
+		{ "id": "v", "name": "Survie", "dir": Vector2(0, 1), "trunk": [
+			{ "id": "v_t1", "name": "Peau dure", "desc": "+25 santé max" },
+			{ "id": "v_t2", "name": "Vol aérien", "desc": "+5 santé par kill en l'air" },
+		], "subs": [
+			{ "name": "Rage", "nodes": [
+				{ "id": "v_r1", "name": "Dos au mur", "desc": "+25 % de dégâts sous 50 % de vie" },
+				{ "id": "v_r2", "name": "Corps à corps", "desc": "+4 santé par kill à bout portant" },
+				{ "id": "v_r3", "name": "Sortie de roulade", "desc": "Dégâts subis divisés par deux juste après une roulade" },
+				{ "id": "v_r4", "name": "Increvable", "desc": "Sous 25 % de vie : +40 % de dégâts et vol de vie doublé", "ult": true },
+			] },
+			{ "name": "Sang-froid", "nodes": [
+				{ "id": "v_s1", "name": "Bouclier", "desc": "Bouclier de 25 qui se recharge après 4 s sans dégâts" },
+				{ "id": "v_s2", "name": "Armure d'exécuteur", "desc": "Un kill à la tête réduit les dégâts subis de 50 % pendant 2 s" },
+				{ "id": "v_s3", "name": "Régénération", "desc": "Régénère 1 santé par seconde" },
+				{ "id": "v_s4", "name": "Second souffle", "desc": "Une fois par round, survit à un coup fatal", "ult": true },
+			] },
+		] },
+		{ "id": "m", "name": "Déplacement", "dir": Vector2(-1, 0), "trunk": [
+			{ "id": "m_t1", "name": "Coureur de murs", "desc": "Le wall run dure 50 % plus longtemps" },
+			{ "id": "m_t2", "name": "Réflexes", "desc": "La roulade se recharge 20 % plus vite" },
+		], "subs": [
+			{ "name": "Aérien", "nodes": [
+				{ "id": "m_a1", "name": "Rebond", "desc": "Un saut de mur recharge la roulade" },
+				{ "id": "m_a2", "name": "Planeur", "desc": "Maintenir le saut en chute fait planer" },
+				{ "id": "m_a3", "name": "Ressorts", "desc": "Double saut 20 % plus haut" },
+				{ "id": "m_a4", "name": "Danse murale", "desc": "Un kill en l'air ou sur un mur recharge la roulade et rapporte +50 % de style", "ult": true },
+			] },
+			{ "name": "Sol", "nodes": [
+				{ "id": "m_g1", "name": "Élan", "desc": "+8 % de vitesse" },
+				{ "id": "m_g2", "name": "Fauchage", "desc": "La glissade renverse et blesse les petits ennemis" },
+				{ "id": "m_g3", "name": "Longue glissade", "desc": "Glissade 40 % plus longue" },
+				{ "id": "m_g4", "name": "Bolide", "desc": "Une glissade juste après une roulade blesse tout sur son passage", "ult": true },
+			] },
 		] },
 	],
 }
+
+# Liste à plat de l'arbre, avec le prérequis de chaque nœud : { id, name, desc, ult, req, branch, sub, weapon }
+static func tree_nodes(char_id: String) -> Array:
+	var out := []
+	for br in TREE[char_id]:
+		var prev := ""
+		for n in br.trunk:
+			var d: Dictionary = n.duplicate()
+			d.req = prev; d.branch = br.id; d.sub = ""; d.weapon = ""
+			out.append(d)
+			prev = n.id
+		var trunk_end := prev
+		for sb in br.subs:
+			prev = trunk_end
+			for n in sb.nodes:
+				var d: Dictionary = n.duplicate()
+				d.req = prev; d.branch = br.id; d.sub = sb.name; d.weapon = sb.get("weapon", "")
+				out.append(d)
+				prev = n.id
+	return out
 
 # ---------- Armes ----------
 const WEAPONS := {
@@ -77,7 +157,8 @@ const MOVE := {
 # ---------- Ennemis ----------
 # Couleurs chaudes et saturées (rouge, orange, ambre, magenta, lime) : le décor est froid pour qu'ils ressortent.
 # ai : walk (corps à corps), ranged (tir et garde ses distances), drone (vole et tire), kamikaze (vole et explose),
-# sniper (laser depuis les toits), hacker (brouille le HUD et se téléporte). shield : bouclier frontal.
+# sniper (laser depuis les toits), hacker (brouille le HUD et se téléporte), furnace (laisse des flaques de métal en fusion),
+# arm (bras fixe sur un socle qui balaie autour de lui, on saute par-dessus). shield : bouclier frontal. reform : se reforme une fois.
 # cr : crédits gagnés, xp : expérience.
 const ENEMIES := {
 	"grunt":   { "name": "Grunt", "ai": "walk", "hp": 24.0, "speed": 6.5, "dmg": 10.0, "r": 0.5, "h": 1.6, "color": Color("ff3b30"), "score": 100, "cr": 4, "xp": 10 },
@@ -89,7 +170,12 @@ const ENEMIES := {
 	"hacker":  { "name": "Hacker", "ai": "hacker", "hp": 34.0, "speed": 6.0, "dmg": 6.0, "r": 0.45, "h": 1.7, "color": Color("ff3cf0"), "score": 280, "cr": 12, "xp": 28 },
 	"sniper":  { "name": "Sniper", "ai": "sniper", "hp": 40.0, "speed": 0.0, "dmg": 26.0, "r": 0.5, "h": 1.9, "color": Color("ff1f3d"), "score": 320, "cr": 14, "xp": 30 },
 	"pub":     { "name": "Drone pub", "ai": "kamikaze", "hp": 8.0, "speed": 13.0, "dmg": 12.0, "r": 0.35, "h": 0.5, "color": Color("ff8a3d"), "score": 60, "cr": 2, "xp": 5, "fly": true },
+	# zone 2, la fonderie
+	"furnace": { "name": "Ouvrier-fournaise", "ai": "furnace", "hp": 40.0, "speed": 5.5, "dmg": 12.0, "r": 0.6, "h": 1.8, "color": Color("ff8a3d"), "score": 220, "cr": 8, "xp": 20 },
+	"arm":     { "name": "Bras mécanique", "ai": "arm", "hp": 80.0, "speed": 0.0, "dmg": 22.0, "r": 0.8, "h": 1.6, "color": Color("ff3cf0"), "score": 300, "cr": 13, "xp": 28, "reach": 6.5 },
+	"golem":   { "name": "Golem de scories", "ai": "walk", "hp": 90.0, "speed": 4.2, "dmg": 20.0, "r": 0.8, "h": 2.1, "color": Color("ff3d7f"), "score": 340, "cr": 15, "xp": 32, "reform": true },
 }
+const MAX_ARMS := 2
 
 # ---------- Zones ----------
 # Chaque round : nombre d'ennemis et poids de chaque type. "miniboss" / "boss" : round de boss avec une escorte.
@@ -109,8 +195,30 @@ const ZONES := [
 		],
 		"miniboss": { "name": "Le Brouilleur", "color": Color("ff3cf0"), "hp": 1500.0, "speed": 5.0, "r": 1.3, "h": 4.0, "pattern": "glitch", "score": 3000, "cr": 80, "xp": 150 },
 		"boss": { "name": "Titan Néon", "color": Color("ff3b30"), "hp": 4600.0, "speed": 4.0, "r": 2.2, "h": 6.0, "pattern": "titan", "score": 8000, "cr": 150, "xp": 300 },
+		"arena": "city",
+		"env": { "sky_top": Color("07051a"), "sky_horizon": Color("3a1450"), "fog": Color("2a1240"), "fog_density": 0.012, "ambient": Color("4a4a78"), "moon": Color("9fb4ff") },
+	},
+	{
+		"name": "Fonderie", "rounds": [
+			{ "n": 12, "mix": { "grunt": 0.6, "furnace": 0.4 } },
+			{ "n": 16, "mix": { "grunt": 0.4, "runner": 0.3, "furnace": 0.3 } },
+			{ "n": 20, "mix": { "grunt": 0.3, "runner": 0.2, "furnace": 0.25, "arm": 0.1, "drone": 0.15 } },
+			{ "n": 24, "mix": { "grunt": 0.25, "runner": 0.2, "furnace": 0.2, "golem": 0.1, "shield": 0.15, "arm": 0.1 } },
+			{ "n": 12, "mix": { "furnace": 0.5, "runner": 0.5 }, "special": "miniboss" },
+			{ "n": 28, "mix": { "grunt": 0.2, "runner": 0.2, "furnace": 0.2, "golem": 0.12, "shield": 0.1, "arm": 0.08, "spitter": 0.1 } },
+			{ "n": 32, "mix": { "grunt": 0.2, "runner": 0.2, "furnace": 0.18, "golem": 0.12, "drone": 0.12, "arm": 0.08, "spitter": 0.1 } },
+			{ "n": 36, "mix": { "grunt": 0.18, "runner": 0.18, "brute": 0.08, "furnace": 0.16, "golem": 0.12, "shield": 0.1, "arm": 0.08, "drone": 0.1 } },
+			{ "n": 40, "mix": { "grunt": 0.16, "runner": 0.18, "brute": 0.1, "furnace": 0.16, "golem": 0.14, "shield": 0.1, "arm": 0.06, "spitter": 0.1 } },
+			{ "n": 14, "mix": { "furnace": 0.5, "golem": 0.2, "runner": 0.3 }, "special": "boss" },
+		],
+		"miniboss": { "name": "Le Contremaître", "color": Color("ff8a3d"), "hp": 2200.0, "speed": 5.0, "r": 1.4, "h": 4.2, "pattern": "foreman", "score": 4000, "cr": 100, "xp": 180 },
+		"boss": { "name": "Haut-Fourneau", "color": Color("ff5a1f"), "hp": 6500.0, "speed": 3.2, "r": 2.6, "h": 6.5, "pattern": "forge", "score": 10000, "cr": 180, "xp": 360 },
+		"arena": "foundry",
+		"env": { "sky_top": Color("05070b"), "sky_horizon": Color("1a2230"), "fog": Color("1a2230"), "fog_density": 0.016, "ambient": Color("5a6680"), "ambient_energy": 0.9, "moon": Color("cfe3ff") },
 	},
 ]
+# PV des ennemis multipliés à chaque zone
+const ZONE_HP := 0.35
 const MAX_SNIPERS := 3
 
 # [nom, style minimum, multiplicateur de score]
@@ -123,16 +231,12 @@ const BASE_UP := {
 }
 
 # ---------- XP ----------
+# environ 5 points à la fin de la zone 1, 7 pour un run qui meurt en zone 2, 22 sur un run complet de 7 zones
 static func xp_for_level(lvl: int) -> int:
-	return 80 + 50 * (lvl - 1)
+	return 380 + 120 * (lvl - 1)
 
 # ---------- Shop ----------
-const MODS := [
-	{ "id": "mod_barrel", "name": "Canon long", "desc": "Dispersion réduite de 30 %", "price": 90 },
-	{ "id": "mod_trigger", "name": "Détente sèche", "desc": "+12 % de cadence de tir", "price": 110 },
-	{ "id": "mod_bolt", "name": "Culasse rapide", "desc": "Recharge 20 % plus vite", "price": 90 },
-	{ "id": "mod_ext", "name": "Grande capacité", "desc": "+25 % de balles par chargeur", "price": 100 },
-]
+# Les mods à comportement (munition, mécanisme, déclencheur) arrivent au shop dans une prochaine passe.
 const HEALS := [
 	{ "id": "heal_s", "name": "Stim", "desc": "+40 santé", "price": 45 },
 	{ "id": "heal_l", "name": "Soin complet", "desc": "Santé au maximum", "price": 100 },
@@ -155,6 +259,10 @@ const AUGMENTS := [
 	{ "id": "leech", "name": "Vampirisme", "desc": "+3 santé à chaque ennemi tué", "tag": "Survie" },
 	{ "id": "regen", "name": "Nanites", "desc": "Régénère 1,5 santé par seconde", "tag": "Survie" },
 	{ "id": "boom", "name": "Charges instables", "desc": "Les ennemis explosent en mourant et blessent leurs voisins", "tag": "Chaos" },
+	{ "id": "barrel", "name": "Canon long", "desc": "Dispersion réduite de 30 %", "tag": "Arme", "max": 2 },
+	{ "id": "trigger", "name": "Détente sèche", "desc": "+12 % de cadence de tir", "tag": "Arme", "max": 3 },
+	{ "id": "bolt", "name": "Culasse rapide", "desc": "Recharge 20 % plus vite", "tag": "Arme", "max": 2 },
+	{ "id": "ext", "name": "Grande capacité", "desc": "+25 % de balles par chargeur", "tag": "Arme", "max": 2 },
 	{ "id": "greed", "name": "Prime de combo", "desc": "+30 % de crédits gagnés", "tag": "Économie", "max": 2 },
 	{ "id": "r_pierce", "weapon": "rifle", "name": "Balles perforantes", "desc": "Les balles traversent un ennemi de plus", "max": 3 },
 	{ "id": "r_lynx", "weapon": "rifle", "name": "Œil de lynx", "desc": "Tirs à la tête : +100 % de dégâts en plus", "max": 3 },

@@ -9,6 +9,7 @@ signal continue_pressed
 signal resume_pressed
 signal retry_pressed
 signal menu_pressed
+signal zone_picked(index: int)
 
 const INK := Color("e8eef2")
 const DIM := Color("8794a0")
@@ -34,9 +35,10 @@ var vig_t := 0.0
 var banner_t := 0.0
 var boss_box: VBoxContainer
 var weapon_box: GridContainer
+var zone_box: HBoxContainer
 var aug_box: GridContainer
 var shop_box: GridContainer
-var tree_box: HBoxContainer
+var tree_box: Control
 var glitch_rect: ColorRect
 var surge_rect: ColorRect
 var glitch_t := 0.0
@@ -476,9 +478,9 @@ func set_mute(m: bool) -> void:
 # ---------- Écrans ----------
 func _build_menu() -> void:
 	var v := _screen("menu", 900)
-	v.add_child(_caps("Zone 1 · Ville néon"))
+	v.add_child(_caps("Run en zones de 10 rounds"))
 	v.add_child(_title("Horde", "Breaker"))
-	var p := _label("10 rounds dans la ville néon : un mini-boss au round 5, le boss de zone au round 10, un shop après les rounds 3, 6 et 9. Enchaîne les kills aériens, les wall runs et les tirs de chargeur : ton combo fait monter le score et charge ta compétence.", 16, DIM, false, true)
+	var p := _label("Chaque zone : un mini-boss au round 5, le boss de zone au round 10, un shop après les rounds 3, 6 et 9. Le boss de zone vaincu ouvre la zone suivante, avec ton build. Enchaîne les kills aériens, les wall runs et les tirs de chargeur : ton combo fait monter le score et charge ta compétence.", 16, DIM, false, true)
 	p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(p)
 	var ch := HBoxContainer.new(); ch.add_theme_constant_override("separation", 18)
@@ -490,6 +492,10 @@ func _build_menu() -> void:
 	cv.add_child(lbl.char_skill)
 	ch.add_child(cv)
 	v.add_child(ch)
+	v.add_child(_caps("Zone de départ"))
+	zone_box = HBoxContainer.new()
+	zone_box.add_theme_constant_override("separation", 10)
+	v.add_child(zone_box)
 	v.add_child(_caps("Choisis ton arme pour le run"))
 	weapon_box = GridContainer.new(); weapon_box.columns = 3
 	weapon_box.add_theme_constant_override("h_separation", 12)
@@ -506,7 +512,16 @@ func _build_menu() -> void:
 	lbl.best = _label("", 12, DIM, true)
 	v.add_child(lbl.best)
 
-func show_menu(character: Dictionary, weapons: Dictionary, chosen: String, best: int, best_wave: int) -> void:
+func show_menu(character: Dictionary, weapons: Dictionary, chosen: String, best: int, best_wave: int, zones: Array = [], start_zone := 0) -> void:
+	for c in zone_box.get_children():
+		c.queue_free()
+	for zi in zones.size():
+		var zb := _button("%d · %s" % [zi + 1, zones[zi].name])
+		zb.toggle_mode = true
+		zb.button_pressed = zi == start_zone
+		var idx := zi
+		zb.pressed.connect(func(): zone_picked.emit(idx))
+		zone_box.add_child(zb)
 	lbl.char_name.text = character.name.to_upper()
 	lbl.char_title.text = (character.title + " · compétence : " + character.skill).to_upper()
 	lbl.char_skill.text = character.blurb + " " + character.skill + " : " + character.skill_desc
@@ -585,38 +600,115 @@ func show_shop(offers: Array, credits: int, hp: int, max_hp: int, sub: String) -
 	show_screen("shop")
 
 func _build_tree() -> void:
-	var v := _screen("tree", 900)
-	lbl.tree_sub = _caps(""); v.add_child(lbl.tree_sub)
-	v.add_child(_title("Arbre de", "compétences"))
-	lbl.tree_points = _label("", 16, WARN, true); v.add_child(lbl.tree_points)
-	tree_box = HBoxContainer.new()
-	tree_box.add_theme_constant_override("separation", 12)
+	var v := _screen("tree", 1180)
+	v.add_theme_constant_override("separation", 10)
+	var top := HBoxContainer.new()
+	var tv := VBoxContainer.new(); tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.tree_sub = _caps(""); tv.add_child(lbl.tree_sub)
+	tv.add_child(_title("Arbre de", "compétences"))
+	top.add_child(tv)
+	lbl.tree_points = _right(_label("", 18, WARN, true)); top.add_child(lbl.tree_points)
+	v.add_child(top)
+	tree_box = Control.new()
+	tree_box.custom_minimum_size = Vector2(1140, 540)
+	tree_box.clip_contents = true
 	v.add_child(tree_box)
+	lbl.tree_name = _label("", 18, INK); v.add_child(lbl.tree_name)
+	lbl.tree_desc = _label("Survole un nœud pour lire son effet. Clic pour le prendre.", 14, DIM, false, true)
+	lbl.tree_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(lbl.tree_desc)
 	var b := _button("Garder mes points (Entrée)", false)
 	b.pressed.connect(func(): continue_pressed.emit())
 	v.add_child(b)
 
-func show_tree(character: Dictionary, branches: Array, owned: Dictionary, points: int, level: int) -> void:
+func _tree_dot(pos: Vector2, size: float, fill: Color, border: Color) -> Button:
+	var b := Button.new()
+	b.position = pos - Vector2(size, size) / 2.0
+	b.size = Vector2(size, size)
+	b.focus_mode = Control.FOCUS_NONE
+	for st in ["normal", "hover", "pressed"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = fill if st != "hover" else fill.lightened(0.25)
+		sb.border_color = border if st != "hover" else INK
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(int(size / 2.0))
+		b.add_theme_stylebox_override(st, sb)
+	tree_box.add_child(b)
+	return b
+
+func show_tree(character: Dictionary, branches: Array, nodes: Array, owned: Dictionary, points: int, level: int, weapon_id: String) -> void:
+	# flocon : Armes en haut, Compétence à droite, Survie en bas, Déplacement à gauche
 	for c in tree_box.get_children():
 		c.queue_free()
+	var center := tree_box.custom_minimum_size / 2.0
+	var pos := {}
 	for br in branches:
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 8)
-		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		col.add_child(_label(br.branch.to_upper(), 14, HOT, true))
-		var prev_owned := true
-		for n in br.nodes:
-			var have: bool = owned.has(n.id)
-			var open: bool = not have and prev_owned
-			var tag := "Acquis" if have else ("Version améliorée" if n.get("ult", false) else ("Disponible" if open else "Verrouillé"))
-			var b := _card("", tag, COOL if have else (WARN if open else DIM), n.name, n.desc, [], have, "", not have and not open, 132.0)
-			var id: String = n.id
-			b.pressed.connect(func(): tree_pick.emit(id))
-			col.add_child(b)
-			prev_owned = have
-		tree_box.add_child(col)
+		var dir: Vector2 = br.dir
+		var perp := Vector2(-dir.y, dir.x)
+		var along := 36.0 if dir.x == 0.0 else 62.0
+		var lat := 44.0 if dir.x == 0.0 else 40.0
+		for k in br.trunk.size():
+			pos[br.trunk[k].id] = center + dir * along * (k + 1)
+		var n_sub: int = br.subs.size()
+		for si in n_sub:
+			var off := si - (n_sub - 1) / 2.0
+			var sb: Dictionary = br.subs[si]
+			for k in sb.nodes.size():
+				pos[sb.nodes[k].id] = center + dir * along * (k + 3) + perp * lat * off * (k + 1) * (1.0 if n_sub > 2 else 1.2)
+			# nom de la sous-branche au-delà de sa pointe
+			var tip: Vector2 = pos[sb.nodes[-1].id]
+			var tl := _label(sb.name.to_upper(), 11, DIM, true)
+			tl.size = Vector2(120, 16)
+			if dir.x > 0.0:
+				tl.position = tip + Vector2(22, -8)
+			elif dir.x < 0.0:
+				tl.position = tip + Vector2(-142, -8)
+				tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			else:
+				tl.position = tip + Vector2(-60, -30 if dir.y < 0.0 else 16)
+				tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			tree_box.add_child(tl)
+		var bl := _label(br.name.to_upper(), 12, HOT, true)
+		var mid: Vector2 = center + dir * along * 1.5
+		bl.size = Vector2(140, 18)
+		if dir.x == 0.0:
+			bl.position = mid + Vector2(16, -9)
+		else:
+			bl.position = mid + Vector2(-70, -28)
+			bl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		tree_box.add_child(bl)
+	# liens
+	for n in nodes:
+		var a: Vector2 = center if n.req == "" else pos[n.req]
+		var ln := Line2D.new()
+		ln.points = PackedVector2Array([a, pos[n.id]])
+		ln.width = 3.0
+		ln.default_color = COOL if owned.has(n.id) else Color(1, 1, 1, 0.14)
+		tree_box.add_child(ln)
+	var core := _label(character.name.to_upper(), 16, INK)
+	core.position = center - Vector2(50, 12)
+	core.size = Vector2(100, 24)
+	core.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tree_box.add_child(core)
+	# nœuds
+	for n in nodes:
+		var have: bool = owned.has(n.id)
+		var other_weapon: bool = n.weapon != "" and n.weapon != weapon_id
+		var open: bool = not have and not other_weapon and (n.req == "" or owned.has(n.req))
+		var fill := COOL if have else Color(0.06, 0.08, 0.11)
+		var border := COOL if have else (WARN if open else Color(DIM.r, DIM.g, DIM.b, 0.35 if other_weapon else 0.8))
+		var size := 30.0 if n.get("ult", false) else 22.0
+		var b := _tree_dot(pos[n.id], size, fill, border)
+		var status := "Acquis" if have else ("Disponible · clic pour le prendre" if open else ("Seulement avec l'arme %s" % n.sub if other_weapon else "Verrouillé : prends d'abord le nœud précédent"))
+		var title: String = n.name + ("  ·  pointe de branche" if n.get("ult", false) else "")
+		var desc: String = n.desc + ".  " + status
+		b.mouse_entered.connect(func():
+			lbl.tree_name.text = title
+			lbl.tree_desc.text = desc)
+		var id: String = n.id
+		b.pressed.connect(func(): tree_pick.emit(id))
 	lbl.tree_points.text = "%d POINT%s À PLACER" % [points, "S" if points > 1 else ""]
-	lbl.tree_sub.text = ("%s · niveau %d" % [character.name, level]).to_upper()
+	lbl.tree_sub.text = ("%s · niveau %d · %d / %d nœuds" % [character.name, level, owned.size(), nodes.size()]).to_upper()
 	show_screen("tree")
 
 func _build_victory() -> void:
@@ -632,7 +724,7 @@ func _build_victory() -> void:
 		c.add_child(lbl[k[0]])
 		g.add_child(c)
 	v.add_child(g)
-	var note := _label("La zone 2, la fonderie, arrive bientôt.", 15, DIM, false, true)
+	var note := _label("La zone 3, le souterrain, arrive bientôt.", 15, DIM, false, true)
 	v.add_child(note)
 	var h := HBoxContainer.new(); h.add_theme_constant_override("separation", 12)
 	var r := _button("Rejouer"); r.size_flags_horizontal = Control.SIZE_EXPAND_FILL

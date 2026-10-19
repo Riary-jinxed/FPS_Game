@@ -36,6 +36,8 @@ var iframes := 0.0
 var dodged := false
 var roll_grace := 0.0
 var slide_t := 0.0
+var bolide := false        # glissade lancée juste après une roulade (arbre : Bolide)
+var hit_count := 0         # balles qui ont touché (arbre : Dixième balle)
 var slide_cd := 0.0
 var air := false
 var eye := 1.6
@@ -260,6 +262,7 @@ func read_input(delta: float) -> Dictionary:
 		"move": Input.get_vector("move_left", "move_right", "move_forward", "move_back"),
 		"look": look,
 		"jump": Input.is_action_just_pressed("jump"),
+		"jump_hold": Input.is_action_pressed("jump"),
 		"roll": Input.is_action_just_pressed("roll"),
 		"slide": Input.is_action_just_pressed("slide"),
 		"reload": Input.is_action_just_pressed("reload"),
@@ -283,6 +286,8 @@ func jump() -> void:
 		wallrun_t = 0.0
 		wallrun_cd = 0.35
 		jumps = 1
+		if game.tree.has("m_a1"):
+			roll_cd = 0.0
 		game.sfx.play("dash")
 		game.add_style("WALL JUMP", 15)
 		return
@@ -298,7 +303,7 @@ func jump() -> void:
 		velocity.y = M.jump
 		jumps = 1
 	elif jumps < game.up.jumps:
-		velocity.y = M.air_jump
+		velocity.y = M.air_jump * (1.2 if game.tree.has("m_a3") else 1.0)
 		jumps = maxi(jumps, 1) + 1
 
 func roll() -> void:
@@ -327,8 +332,9 @@ func slide() -> void:
 	var k := maxf(hs * 1.2, 16.0 * game.up.slide_boost) / hs
 	velocity.x *= k
 	velocity.z *= k
-	slide_t = 0.8
+	slide_t = 0.8 * (1.4 if game.tree.has("m_g3") else 1.0)
 	slide_cd = 0.5
+	bolide = roll_grace > 0.0
 	game.sfx.play("slide")
 
 func start_reload() -> void:
@@ -389,7 +395,7 @@ func simulate(it: Dictionary, delta: float) -> void:
 			roll_grace = 0.6
 	elif slide_t > 0.0:
 		slide_t -= delta
-		var k := maxf(0.0, 1.0 - 1.1 * delta)
+		var k := maxf(0.0, 1.0 - (0.75 if game.tree.has("m_g3") else 1.1) * delta)
 		velocity.x *= k
 		velocity.z *= k
 		if Vector2(velocity.x, velocity.z).length() < 5.0 or not is_on_floor():
@@ -404,6 +410,9 @@ func simulate(it: Dictionary, delta: float) -> void:
 			_air_move(wish, spd, delta)
 	if wallrun_t <= 0.0:
 		velocity.y -= M.gravity * delta
+		if game.tree.has("m_a2") and it.get("jump_hold", false) and velocity.y < 0.0 and not is_on_floor():
+			# Planeur : chute lente tant qu'on garde le saut enfoncé
+			velocity.y = maxf(velocity.y + M.gravity * 0.7 * delta, -3.5)
 	move_and_slide()
 	_check_wallrun(it)
 	if is_on_floor():
@@ -643,7 +652,7 @@ func shoot() -> void:
 	var surge: bool = game.skill_t > 0.0
 	if not surge:
 		ammo -= 1
-	fire_cd = W.rate / (1.25 if surge else 1.0)
+	fire_cd = W.rate / (1.25 if surge else 1.0) / (1.3 if wallrun_t > 0.0 and game.tree.has("w_j3") else 1.0)
 	shot_count += 1
 	var G: Dictionary = guns[shot_count % guns.size()]
 	G.kick = 1.0
@@ -660,7 +669,11 @@ func shoot() -> void:
 	var basis := cam.global_transform.basis
 	var muzzle: Vector3 = G.g.to_global(G.muzzle)
 	var last_shot: bool = game.up.last_shots > 0 and ammo < game.up.last_shots
-	var dmg_mul := 2.0 if last_shot else 1.0
+	var dmg_mul: float = (2.0 if last_shot else 1.0) * game.dmg_bonus()
+	var ram: bool = slide_t > 0.0 and game.tree.has("w_b4")
+	if ram:
+		dmg_mul *= 1.5
+	var spread: float = W.spread * (0.5 if air and game.tree.has("w_j1") else 1.0)
 	if surge:
 		dmg_mul *= 1.5
 	if game.up.air_dmg > 0 and air:
@@ -673,7 +686,7 @@ func shoot() -> void:
 	var hit_any := false
 	var mags := flying_mags()
 	for i in W.pellets:
-		var dir := (basis * Vector3(randf_range(-W.spread, W.spread), randf_range(-W.spread, W.spread), -1.0)).normalized()
+		var dir := (basis * Vector3(randf_range(-spread, spread), randf_range(-spread, spread), -1.0)).normalized()
 		var end := origin + dir * 60.0
 		var exclude: Array[RID] = [get_rid()]
 		var q := PhysicsRayQueryParameters3D.create(origin, origin + dir * 120.0, 1 | 2, exclude)
@@ -705,9 +718,27 @@ func shoot() -> void:
 				end = r.position
 				var head_hit: bool = r.position.y > en.global_position.y + en.T.h * 0.8
 				var dmg: float = W.dmg * dmg_mul * (game.up.crit if head_hit else 1.0)
-				game.damage_enemy(en, dmg, r.position, { "src": "gun", "head": head_hit, "from": origin })
+				var ctx := { "src": "gun", "head": head_hit, "from": origin }
+				if head_hit and game.tree.has("w_v1"):
+					ammo = mini(W.mag, ammo + 1)
+				if head_hit and game.tree.has("w_v2") and not en.is_boss:
+					# Exécution : un tir à la tête achève un ennemi affaibli
+					var seuil: float = 0.4 if game.tree.has("w_v3") else 0.3
+					if en.hp - dmg <= en.max_hp * seuil and en.reform_t <= 0.0:
+						dmg = en.hp + 1.0
+						ctx.exec = true
+						ammo = mini(W.mag, ammo + 1)
+						game.add_style("EXÉCUTION", 30, true)
+				game.damage_enemy(en, dmg, r.position, ctx)
+				if ram:
+					game.knockback(en, dir, 4.0)
+				hit_count += 1
 				if game.up.ricochet > 0 and randf() < 0.3 * game.up.ricochet:
 					game.ricochet(en, r.position, dmg * 0.6)
+				elif game.tree.has("w_j2") and hit_count % 10 == 0:
+					game.ricochet(en, r.position, dmg)
+				if air and game.tree.has("w_j4"):
+					game.ricochet(en, r.position, dmg * 0.7)
 				hit_any = true
 				exclude.append(en.get_rid())
 				q = PhysicsRayQueryParameters3D.create(origin, origin + dir * 120.0, 1 | 2, exclude)

@@ -2,25 +2,18 @@
 # plateformes, jump pads, et une dalle centrale qui s'effondre pendant la phase 2 du boss.
 # Palette du décor volontairement froide (cyan, bleu, violet) : les couleurs chaudes sont réservées
 # aux ennemis et à leurs tirs, pour qu'ils ressortent du décor.
-extends Node3D
+extends "res://scripts/arena.gd"
 
-const HALF := 40.0
-const PLAZA := 12.0          # demi-taille de la dalle centrale
 const TILE := 4.0
 const PIT_Y := -10.0
 
-var perches: Array[Vector3] = []
-var pads: Array = []          # { pos: Vector3, push: Vector3, node: MeshInstance3D }
-var tiles: Array = []         # dalles centrales (StaticBody3D)
 var rise_walls: Array = []    # murs qui sortent du sol en phase 2
-var collapsed := false
-var flickers: Array = []      # néons qui clignotent { mat, base, seed }
 var rain: CPUParticles3D
 
 var _win_tex: ImageTexture
-var _rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
+	phase2_text = "La dalle s'effondre"
 	_rng.seed = 7
 	_win_tex = _window_texture()
 	_build_floor()
@@ -29,15 +22,6 @@ func _ready() -> void:
 	_build_interior()
 	_build_lamps()
 	_build_rain()
-
-func _process(_delta: float) -> void:
-	var t := Time.get_ticks_msec() * 0.001
-	for f in flickers:
-		var on := 1.0
-		var s: float = sin(t * f.speed + f.seed)
-		if s > 0.97:
-			on = 0.15
-		f.mat.emission_energy_multiplier = f.base * on
 
 # ---------- Textures procédurales ----------
 func _window_texture() -> ImageTexture:
@@ -75,16 +59,6 @@ func _grate_texture() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 # ---------- Matériaux ----------
-func _neon(c: Color, energy := 3.0, flicker := false) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.emission_enabled = true
-	m.emission = c
-	m.emission_energy_multiplier = energy
-	if flicker:
-		flickers.append({ "mat": m, "base": energy, "seed": _rng.randf() * 100.0, "speed": _rng.randf_range(1.5, 4.0) })
-	return m
-
 func _building_mat() -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color("2a3040")
@@ -99,34 +73,7 @@ func _building_mat() -> StandardMaterial3D:
 	m.metallic = 0.3
 	return m
 
-func _concrete(c := Color("232a36")) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = 0.75
-	return m
-
 # ---------- Briques ----------
-func _box(pos: Vector3, size: Vector3, mat: Material, collide := true, parent: Node3D = self) -> Node3D:
-	var root: Node3D
-	if collide:
-		var body := StaticBody3D.new()
-		body.collision_layer = 1
-		var col := CollisionShape3D.new()
-		var shape := BoxShape3D.new(); shape.size = size
-		col.shape = shape
-		body.add_child(col)
-		root = body
-	else:
-		root = Node3D.new()
-	root.position = pos
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new(); bm.size = size
-	mi.mesh = bm
-	mi.material_override = mat
-	root.add_child(mi)
-	parent.add_child(root)
-	return root
-
 func _sign(pos: Vector3, rot_y: float, size: Vector2, text: String, color: Color, flicker := true) -> void:
 	# panneau néon : cadre lumineux + texte
 	var holder := Node3D.new()
@@ -242,16 +189,7 @@ func _build_perimeter() -> void:
 			_box(face + Vector3(0, 3.2, 0), (Vector3(wdt * 0.8, 0.12, 0.6) if side < 2 else Vector3(0.6, 0.12, wdt * 0.8)), _neon(colors[(k + 1) % colors.size()], 2.0, true), false)
 			x += wdt
 			k += 1
-	# murs invisibles au-dessus des toits : on ne sort pas de l'arène
-	for wall in [[Vector3(0, 40, -HALF - 0.5), Vector3(HALF * 2, 80, 1)], [Vector3(0, 40, HALF + 0.5), Vector3(HALF * 2, 80, 1)],
-			[Vector3(-HALF - 0.5, 40, 0), Vector3(1, 80, HALF * 2)], [Vector3(HALF + 0.5, 40, 0), Vector3(1, 80, HALF * 2)]]:
-		var body := StaticBody3D.new()
-		var col := CollisionShape3D.new()
-		var shape := BoxShape3D.new(); shape.size = wall[1]
-		col.shape = shape
-		body.add_child(col)
-		body.position = wall[0]
-		add_child(body)
+	_bounds()
 
 func _build_skyline() -> void:
 	# silhouettes lointaines, sans collision
@@ -358,22 +296,6 @@ func _ad_wall(pos: Vector3, rot_y: float, text: String, a: Color, b: Color) -> v
 	var top := _box(pos + Vector3(0, 8.08, 0), Vector3(16.1, 0.12, 0.65), _neon(a, 3.0, true), false)
 	top.rotation.y = rot_y
 
-func _add_pad(pos: Vector3, push: Vector3, power: float) -> void:
-	var mi := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.top_radius = 1.2; cm.bottom_radius = 1.3; cm.height = 0.12
-	mi.mesh = cm
-	mi.material_override = _neon(Color("3fd0c9"), 3.5)
-	mi.position = pos + Vector3(0, 0.06, 0)
-	add_child(mi)
-	var ring := MeshInstance3D.new()
-	var tm := TorusMesh.new(); tm.inner_radius = 1.35; tm.outer_radius = 1.5
-	ring.mesh = tm
-	ring.material_override = _neon(Color("ffffff"), 2.0)
-	ring.position = pos + Vector3(0, 0.1, 0)
-	add_child(ring)
-	pads.append({ "pos": pos, "push": push, "power": power, "node": mi, "ring": ring })
-
 func _build_lamps() -> void:
 	var pole := _concrete(Color("1a1f2a"))
 	var spots := [Vector3(-36, 0, -16), Vector3(36, 0, 16), Vector3(-16, 0, 36), Vector3(16, 0, -36), Vector3(-36, 0, 22), Vector3(36, 0, -22), Vector3(22, 0, 36), Vector3(-22, 0, -36)]
@@ -436,6 +358,7 @@ func collapse() -> void:
 	order.shuffle()
 	var drop := order.slice(0, int(order.size() * 0.6))
 	for t in drop:
+		t.set_meta("drop", true)
 		var m: StandardMaterial3D = t.get_meta("mat")
 		var tw: Tween = t.create_tween()
 		# alerte : la dalle clignote en rouge, puis tombe
@@ -448,6 +371,15 @@ func collapse() -> void:
 		var tw: Tween = w.create_tween()
 		tw.tween_interval(0.8)
 		tw.tween_property(w, "position", w.get_meta("target"), 2.0).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func over_pit(p: Vector3) -> bool:
+	# vrai si p est au-dessus d'une dalle tombée (ou en train de tomber)
+	if not collapsed or absf(p.x) > PLAZA or absf(p.z) > PLAZA:
+		return false
+	for t in tiles:
+		if is_instance_valid(t) and not t.has_meta("drop") and absf(t.position.x - p.x) <= TILE / 2.0 and absf(t.position.z - p.z) <= TILE / 2.0:
+			return false
+	return true
 
 func reset() -> void:
 	# remet la dalle en place pour une nouvelle partie

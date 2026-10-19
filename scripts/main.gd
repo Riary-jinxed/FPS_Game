@@ -1,4 +1,4 @@
-# Horde Breaker : flux d'un run (zone 1, 10 rounds), style, économie, XP, arbre, Surcharge, augments.
+# Horde Breaker : flux d'un run (zones de 10 rounds enchaînées), style, économie, XP, arbre, Surcharge, augments.
 extends Node3D
 
 const Data = preload("res://scripts/data.gd")
@@ -9,7 +9,7 @@ const ThrownMag = preload("res://scripts/thrown_mag.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const MusicScript = preload("res://scripts/music.gd")
 const SfxScript = preload("res://scripts/sfx.gd")
-const CityScript = preload("res://scripts/city.gd")
+const ARENAS := { "city": preload("res://scripts/city.gd"), "foundry": preload("res://scripts/foundry.gd") }
 const SAVE := "user://save.cfg"
 
 var state := "menu" # menu, play, between, paused, over, victory
@@ -17,7 +17,7 @@ var player
 var hud
 var music
 var sfx
-var city
+var city                 # arène de la zone en cours (city.gd, foundry.gd...)
 var world: Node3D        # objets temporaires (ennemis, tirs, effets)
 var menu_cam: Camera3D
 
@@ -38,6 +38,14 @@ var best := 0
 var best_wave := 0
 var pickups: Array = []
 var zone_idx := 0
+var start_zone := 0
+var hazards: Array = []   # flaques de métal { pos, r, life, dps, delay, node, warn }
+var rings: Array = []     # ondes de coulée { c, r, spd, max, dmg, delay, hit, node }
+var hazard_tick := 0.0
+var flood_warned := false
+var env: Environment
+var sky_mat: ProceduralSkyMaterial
+var moon: DirectionalLight3D
 
 # économie et progression du run
 var credits := 0
@@ -45,7 +53,14 @@ var xp := 0
 var level := 1
 var points := 0
 var tree := {}
-var mods := {}
+var shield := 0.0          # Survie > Bouclier
+var calm_t := 0.0          # temps depuis le dernier coup reçu
+var armor_t := 0.0         # Survie > Armure d'exécuteur
+var second_wind := false   # Survie > Second souffle, déjà utilisé ce round
+var surge_hits := {}       # Compétence > Exécution : ennemis touchés pendant Surcharge
+var surge_kills := 0       # Compétence > Écho
+var tempest_t := 0.0       # Compétence > Tempête : fenêtre de relance gratuite
+var slide_hit := {}        # Déplacement > Fauchage / Bolide : ennemis déjà percutés par cette glissade
 var weapon_level := 1
 var between: Array = []
 var screen := ""
@@ -75,8 +90,7 @@ func _ready() -> void:
 	randomize()
 	_setup_input()
 	_build_environment()
-	city = CityScript.new()
-	add_child(city)
+	_load_arena()
 	world = Node3D.new()
 	add_child(world)
 	sfx = SfxScript.new(); add_child(sfx)
@@ -97,8 +111,12 @@ func _ready() -> void:
 	hud.resume_pressed.connect(resume)
 	hud.retry_pressed.connect(func(): start_with(chosen))
 	hud.menu_pressed.connect(to_menu)
+	hud.zone_picked.connect(pick_zone)
 	_load_save()
 	to_menu()
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--zone="):
+			pick_zone(clampi(int(a.substr(7)) - 1, 0, Data.ZONES.size() - 1))
 	if "--autotest" in OS.get_cmdline_user_args():
 		_autotest()
 	elif "--showcase" in OS.get_cmdline_user_args():
@@ -138,9 +156,10 @@ func _setup_input() -> void:
 	add.call("confirm", [KEY_ENTER, KEY_KP_ENTER], -1, [JOY_BUTTON_A], [])
 
 func _build_environment() -> void:
-	var env := Environment.new()
+	env = Environment.new()
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
+	sky_mat = sm
 	sm.sky_top_color = Color("07051a")
 	sm.sky_horizon_color = Color("3a1450")
 	sm.ground_bottom_color = Color("05040c")
@@ -176,12 +195,44 @@ func _build_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
-	var moon := DirectionalLight3D.new()
+	moon = DirectionalLight3D.new()
 	moon.light_color = Color("9fb4ff")
 	moon.light_energy = 0.35
 	moon.shadow_enabled = true
 	moon.rotation_degrees = Vector3(-60, 35, 0)
 	add_child(moon)
+
+func _apply_zone_env() -> void:
+	var E: Dictionary = zone().env
+	sky_mat.sky_top_color = E.sky_top
+	sky_mat.sky_horizon_color = E.sky_horizon
+	sky_mat.ground_horizon_color = E.sky_horizon
+	env.fog_light_color = E.fog
+	env.fog_density = E.fog_density
+	env.ambient_light_color = E.ambient
+	env.ambient_light_energy = E.get("ambient_energy", 0.55)
+	moon.light_color = E.moon
+
+func _load_arena() -> void:
+	# chaque zone a son arène : on remplace l'ancienne
+	var want = ARENAS[zone().arena]
+	if city != null and city.get_script() == want:
+		city.reset()
+	else:
+		if city != null:
+			remove_child(city)
+			city.queue_free()
+		city = want.new()
+		add_child(city)
+	_apply_zone_env()
+
+func pick_zone(i: int) -> void:
+	start_zone = i
+	if state == "menu":
+		zone_idx = i
+		_load_arena()
+		_save()
+		to_menu()
 
 func _load_save() -> void:
 	var cfg := ConfigFile.new()
@@ -191,12 +242,16 @@ func _load_save() -> void:
 		var c: String = cfg.get_value("game", "weapon", "rifle")
 		if Data.WEAPONS.has(c):
 			chosen = c
+		start_zone = clampi(cfg.get_value("game", "zone", 0), 0, Data.ZONES.size() - 1)
+		zone_idx = start_zone
+		_load_arena()
 
 func _save() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("game", "best", best)
 	cfg.set_value("game", "best_wave", best_wave)
 	cfg.set_value("game", "weapon", chosen)
+	cfg.set_value("game", "zone", start_zone)
 	cfg.save(SAVE)
 
 func zone() -> Dictionary:
@@ -208,7 +263,7 @@ func to_menu() -> void:
 	_set_slow(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	menu_cam.current = true
-	hud.show_menu(Data.CHARACTERS[character], Data.WEAPONS, chosen, best, best_wave)
+	hud.show_menu(Data.CHARACTERS[character], Data.WEAPONS, chosen, best, best_wave, Data.ZONES, start_zone)
 	music.play("menu")
 
 func start_with(id: String) -> void:
@@ -226,7 +281,8 @@ func reset_game() -> void:
 	up = Data.BASE_UP.duplicate()
 	taken = {}
 	tree = {}
-	mods = {}
+	shield = 0.0; calm_t = 0.0; armor_t = 0.0; second_wind = false
+	surge_hits = {}; surge_kills = 0; tempest_t = 0.0; slide_hit = {}
 	between = []
 	weapon_level = 1
 	credits = 0; xp = 0; level = 1; points = 0
@@ -236,7 +292,9 @@ func reset_game() -> void:
 	player.reset(Data.WEAPONS[chosen])
 	wave = 0; cleared = 0; score = 0; kills = 0; to_spawn = []; intermission = 1.5
 	style = 0.0; chain = 0; best_rank = 0; recent_kills = []
-	city.reset()
+	zone_idx = start_zone
+	_clear_hazards()
+	_load_arena()
 	music.set_zone(zone_idx + 1)
 
 func begin() -> void:
@@ -336,6 +394,7 @@ func _wave_composition(w: int) -> Array:
 
 func start_wave() -> void:
 	wave += 1
+	second_wind = false
 	music.set_zone(zone_idx + 1)
 	var R := _round_def(wave)
 	to_spawn = _wave_composition(wave)
@@ -353,47 +412,77 @@ func start_wave() -> void:
 			music.play("wave")
 			hud.banner("Round %d" % wave, "%s · %d ennemis" % [zone().name, to_spawn.size()])
 
-func spawn_pos(min_dist := 18.0, fly := false) -> Vector3:
+func spawn_pos(min_dist := 18.0, fly := false, radius := 0.9, height := 2.2) -> Vector3:
+	# position libre : jamais dans le décor (murs de pub, tours, plateformes), jamais au-dessus de la fosse
 	var p := Vector3.ZERO
-	for tries in 12:
+	var best := Vector3.ZERO
+	var found := false
+	for tries in 40:
 		var a := randf() * TAU
-		var d := 26.0 + randf() * 11.0
-		p = Vector3(clampf(cos(a) * d, -37.0, 37.0), 0.05, clampf(sin(a) * d, -37.0, 37.0))
+		var d := 14.0 + randf() * 23.0
+		p = Vector3(clampf(cos(a) * d, -36.0, 36.0), 0.05, clampf(sin(a) * d, -36.0, 36.0))
+		if fly:
+			p.y = 5.0 + randf() * 3.0
+		if not is_free(p, radius, height) or (not fly and city.over_pit(p)):
+			continue
+		best = p
+		found = true
 		if p.distance_to(player.global_position) >= min_dist:
-			break
-	if fly:
-		p.y = 5.0 + randf() * 3.0
-	return p
+			return p
+	if found:
+		return best
+	return Vector3(0, p.y, -24) if not city.over_pit(Vector3(0, 0, -24)) else Vector3(0, p.y, -34)
 
-func _free_perch() -> Variant:
+func is_free(p: Vector3, radius := 0.9, height := 2.2) -> bool:
+	var shape := CapsuleShape3D.new()
+	shape.radius = radius + 0.25
+	shape.height = maxf(height, shape.radius * 2.0 + 0.1)
+	var q := PhysicsShapeQueryParameters3D.new()
+	q.shape = shape
+	q.collision_mask = 1
+	# le bas de la capsule reste 0.25 au-dessus du sol pour ne pas compter la dalle
+	q.transform = Transform3D(Basis(), p + Vector3(0, shape.height / 2.0 + 0.25, 0))
+	return get_world_3d().direct_space_state.intersect_shape(q, 1).is_empty()
+
+func _free_slot(type: String, slots: Array, max_n: int) -> Variant:
+	# poste libre pour un ennemi fixe (sniper sur un toit, bras mécanique sur un socle)
 	var used := []
 	for e in enemies:
-		if is_instance_valid(e) and e.alive and e.type_name == "sniper":
-			used.append(e.get_meta("perch"))
-	if used.size() >= Data.MAX_SNIPERS:
+		if is_instance_valid(e) and e.alive and e.type_name == type:
+			used.append(e.get_meta("slot"))
+	if used.size() >= max_n:
 		return null
 	var free := []
-	for i in city.perches.size():
+	for i in slots.size():
 		if not i in used:
 			free.append(i)
 	return null if free.is_empty() else free[randi() % free.size()]
 
 func spawn_enemy(type: String, mult: float) -> void:
-	var perch = null
+	var slot = null
+	var slots: Array = []
 	if type == "sniper":
-		perch = _free_perch()
-		if perch == null:
+		slots = city.perches
+		slot = _free_slot(type, slots, Data.MAX_SNIPERS)
+		if slot == null:
 			type = "spitter"
+	elif type == "arm":
+		slots = city.anchors
+		slot = _free_slot(type, slots, Data.MAX_ARMS)
+		if slot == null:
+			type = "furnace"
 	var e = EnemyScript.new()
 	var t: Dictionary = Data.ENEMIES[type].duplicate()
-	e.setup(self, type, t, mult)
+	e.setup(self, type, t, mult * (1.0 + Data.ZONE_HP * zone_idx))
 	e.speed = t.speed * (0.9 + randf() * 0.25) * minf(1.3, 1.0 + wave * 0.02)
 	world.add_child(e)
-	if perch != null:
-		e.set_meta("perch", perch)
-		e.global_position = city.perches[perch] + Vector3(0, 0.05, 0)
+	if slot != null:
+		e.set_meta("slot", slot)
+		e.global_position = slots[slot] + Vector3(0, 0.05, 0)
+		e.facing = randf() * TAU
+		e.arm_angle = randf() * TAU
 	else:
-		e.global_position = spawn_pos(18.0, t.get("fly", false))
+		e.global_position = spawn_pos(18.0, t.get("fly", false), t.r, t.h)
 	enemies.append(e)
 
 func _spawn_boss(b: Dictionary, mini: bool) -> void:
@@ -415,16 +504,38 @@ func _on_round_clear() -> void:
 	var bonus := 20 + 5 * wave + 10 * rank_idx()
 	credits += bonus
 	hud.add_feed("ROUND NETTOYÉ +%d ¤" % bonus, true)
-	if wave >= Data.BOSS_ROUND:
+	if wave >= Data.BOSS_ROUND and zone_idx + 1 >= Data.ZONES.size():
 		victory()
 		return
 	between = []
-	if wave == Data.MINIBOSS_ROUND:
+	# un augment offert après chaque boss (mini-boss et boss de zone)
+	if wave == Data.MINIBOSS_ROUND or wave >= Data.BOSS_ROUND:
 		between.append("augment")
 	if wave in Data.SHOP_ROUNDS:
 		between.append("shop")
 	between.append("tree")
+	if wave >= Data.BOSS_ROUND:
+		between.append("zone")
 	next_between()
+
+func next_zone() -> void:
+	# zone suivante : nouvelle arène, les rounds repartent de 1, le build et les crédits restent
+	zone_idx += 1
+	for c in world.get_children():
+		c.queue_free()
+	enemies.clear()
+	pickups.clear()
+	_clear_hazards()
+	boss = null
+	_load_arena()
+	wave = 0; cleared = 0; to_spawn = []; intermission = 3.0
+	player.global_position = Vector3(0, 0.1, 16)
+	player.velocity = Vector3.ZERO
+	player.hp = up.max_hp
+	music.set_zone(zone_idx + 1)
+	begin()
+	hud.banner("Zone %d" % (zone_idx + 1), zone().name)
+	sfx.play("level")
 
 func next_between() -> void:
 	# enchaîne les écrans de fin de round : augment offert, shop, arbre (s'il reste des points)
@@ -432,6 +543,9 @@ func next_between() -> void:
 		var s: String = between.pop_front()
 		if s == "tree" and points <= 0:
 			continue
+		if s == "zone":
+			next_zone()
+			return
 		state = "between"
 		screen = s
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -471,10 +585,18 @@ func _process(delta: float) -> void:
 	if skill_t > 0.0:
 		skill_t -= delta
 		if skill_t <= 0.0:
-			_set_slow(false)
+			_end_surge()
+	tempest_t = maxf(0.0, tempest_t - delta)
+	armor_t = maxf(0.0, armor_t - delta)
+	calm_t += delta
+	if tree.has("v_s1") and calm_t > 4.0:
+		shield = minf(25.0, shield + 12.0 * delta)
+	_slide_hits()
 	if glitch_t > 0.0:
 		glitch_t -= delta
 	_update_pads(delta)
+	city.tick(delta)
+	_update_hazards(delta)
 	enemies = enemies.filter(func(e): return is_instance_valid(e) and e.alive)
 	if enemies.is_empty() and to_spawn.is_empty():
 		if wave > cleared:
@@ -550,7 +672,7 @@ func _update_hud() -> void:
 	elif player.skill >= 100.0:
 		skill_txt = "SURCHARGE PRÊTE · E"
 	hud.update_hud({
-		"hp": maxi(0, ceili(player.hp)), "hp_pct": 100.0 * player.hp / up.max_hp,
+		"hp": str(maxi(0, ceili(player.hp))) + (" +%d" % roundi(shield) if shield >= 1.0 else ""), "hp_pct": 100.0 * player.hp / up.max_hp,
 		"roll_pct": 100.0 * (1.0 - player.roll_cd / up.roll_cd),
 		"score": score, "rank": R[0], "style_pct": style_pct, "chain": chain_txt,
 		"zone": "Zone %d · %s" % [zone_idx + 1, zone().name], "wave": "%d / %d" % [wave, Data.BOSS_ROUND],
@@ -599,19 +721,73 @@ func hitstop(seconds: float) -> void:
 
 # ---------- Surcharge ----------
 func _set_slow(on: bool) -> void:
-	enemy_slow = 0.55 if on else 1.0
+	enemy_slow = (0.4 if tree.has("s_r1") else 0.55) if on else 1.0
 	if not on:
 		skill_t = 0.0
 	if hud:
 		hud.set_surge(on)
 
+func _end_surge() -> void:
+	var was_free := tempest_t < 0.0
+	_set_slow(false)
+	if tree.has("s_r4"):
+		# Exécution : tous les ennemis touchés pendant Surcharge prennent un gros coup
+		for e in surge_hits.keys():
+			if is_instance_valid(e) and e.alive:
+				shockwave(e.center(), Color("3fd0c9"), 2.0)
+				damage_enemy(e, (60.0 + 8.0 * wave) * (1.0 + Data.ZONE_HP * zone_idx), e.center(), { "src": "boom" })
+	surge_hits = {}
+	if tree.has("s_d3") and surge_kills >= 5:
+		player.skill = maxf(player.skill, 50.0)
+		hud.add_feed("ÉCHO · 50 %", true)
+	if tree.has("s_d4") and not was_free:
+		tempest_t = 10.0
+
+func _slide_hits() -> void:
+	# Fauchage : la glissade renverse les petits ennemis. Bolide : après une roulade, elle blesse tout.
+	if player.slide_t <= 0.0:
+		slide_hit = {}
+		return
+	var bolide: bool = tree.has("m_g4") and player.bolide
+	if not bolide and not tree.has("m_g2"):
+		return
+	var pp: Vector3 = player.global_position
+	for e in enemies.duplicate():
+		if not is_instance_valid(e) or not e.alive or slide_hit.has(e):
+			continue
+		var d := Vector2(e.global_position.x - pp.x, e.global_position.z - pp.z).length()
+		if d > e.T.r + 1.2 or absf(e.global_position.y - pp.y) > 1.5:
+			continue
+		if bolide:
+			slide_hit[e] = true
+			damage_enemy(e, (55.0 + 6.0 * wave) * (1.0 + Data.ZONE_HP * zone_idx), e.center(), { "src": "boom" })
+		elif not e.is_boss and Data.ENEMIES.get(e.type_name, {}).get("hp", 999.0) <= 40.0:
+			slide_hit[e] = true
+			damage_enemy(e, 40.0, e.center(), { "src": "boom" })
+			knockback(e, Vector3(e.global_position.x - pp.x, 0, e.global_position.z - pp.z), 3.0)
+
+func knockback(e, dir: Vector3, dist: float) -> void:
+	if not is_instance_valid(e) or not e.alive or e.is_boss or dir.length() < 0.01:
+		return
+	var to: Vector3 = e.global_position + dir.normalized() * dist
+	if is_free(to, e.T.r, e.T.h) and not city.over_pit(to):
+		e.global_position = to
+
 func activate_skill() -> void:
 	if state != "play" or skill_t > 0.0:
 		return
-	if player.skill < 100.0:
+	var free := tempest_t > 0.0
+	if player.skill < 100.0 and not free:
 		sfx.play("deny")
 		return
-	player.skill = 0.0
+	if free:
+		# Tempête : la relance gratuite ne marche qu'une fois
+		tempest_t = 0.0
+		hud.add_feed("TEMPÊTE", true)
+	else:
+		player.skill = 0.0
+	surge_hits = {}
+	surge_kills = 0
 	skill_t = Data.CHARACTERS[character].skill_time + up.skill_time
 	_set_slow(true)
 	player.ammo = player.W.mag
@@ -620,7 +796,7 @@ func activate_skill() -> void:
 	hud.flash(Color("3fd0c9"), 0.8)
 	hud.add_feed("SURCHARGE", true)
 	shake = maxf(shake, 0.4)
-	if tree.has("s3"):
+	if tree.has("s_d1"):
 		var c: Vector3 = player.global_position + Vector3(0, 1, 0)
 		shockwave(c, Color("3fd0c9"), 9.0)
 		for e in enemies.duplicate():
@@ -638,6 +814,28 @@ func hurt_player(d: float, unavoidable := false) -> bool:
 			sfx.play("dodge")
 			hud.flash(Color("3fd0c9"), 0.5)
 		return false
+	if tree.has("s_r2") and skill_t > Data.CHARACTERS[character].skill_time + up.skill_time - 1.0:
+		return false
+	if tree.has("v_r3") and player.roll_grace > 0.0:
+		d *= 0.5
+	if armor_t > 0.0:
+		d *= 0.5
+	calm_t = 0.0
+	if shield > 0.0:
+		var absorbed := minf(shield, d)
+		shield -= absorbed
+		d -= absorbed
+		if d <= 0.0:
+			sfx.play("click")
+			return true
+	if tree.has("v_s4") and not second_wind and player.hp - d <= 0.0:
+		# Second souffle : une fois par round, on survit au coup fatal
+		second_wind = true
+		player.hp = 1.0
+		player.iframes = 1.0
+		hud.banner("Second souffle", "")
+		sfx.play("level")
+		return true
 	player.hp -= d
 	shake = maxf(shake, 0.35)
 	style *= 0.55
@@ -674,11 +872,15 @@ func boss_phase2(en) -> void:
 		hud.banner("Phase 2", en.T.name + " s'énerve")
 		return
 	music.play("boss2")
-	hud.banner("Phase 2", "La dalle s'effondre")
+	hud.banner("Phase 2", city.phase2_text)
 	city.collapse()
 
 func damage_enemy(en, dmg: float, at: Vector3, ctx := {}) -> void:
 	if not is_instance_valid(en) or not en.alive:
+		return
+	if en.reform_t > 0.0:
+		# golem en train de se reformer : les tirs ricochent
+		burst(at, Color("9aa8bd"), 2, 3.0)
 		return
 	if ctx.get("src", "") == "gun" and ctx.has("from") and en.blocks(ctx.from):
 		# bouclier frontal : il faut le contourner, passer au-dessus ou le faire exploser
@@ -687,6 +889,8 @@ func damage_enemy(en, dmg: float, at: Vector3, ctx := {}) -> void:
 		if shield_ping <= 0.0:
 			shield_ping = 0.15
 			sfx.play("click")
+	if skill_t > 0.0:
+		surge_hits[en] = true
 	en.hp -= dmg
 	en.flash_t = 0.08
 	burst(at, en.T.color, 4 if en.is_boss else 3, 4.0)
@@ -695,6 +899,13 @@ func damage_enemy(en, dmg: float, at: Vector3, ctx := {}) -> void:
 
 func kill_enemy(en, ctx: Dictionary) -> void:
 	if not en.alive:
+		return
+	if en.T.get("reform", false) and not en.reformed:
+		# golem de scories : il s'effondre puis se reforme une fois
+		en.start_reform()
+		burst(en.center(), en.T.color, 14, 7.0)
+		add_style("BRISÉ", 15)
+		sfx.play("boom")
 		return
 	en.alive = false
 	var c: Vector3 = en.center()
@@ -706,11 +917,12 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 	add_style("", 12)
 	if ctx.get("head", false): add_style("TÊTE", 20)
 	var aerial: bool = player.air
-	var m4: float = 1.5 if tree.has("m4") else 1.0
+	var m4: float = 1.5 if tree.has("m_a4") else 1.0
 	if player.wallrun_t > 0.0: add_style("KILL MURAL", 50 * m4, true)
 	elif aerial: add_style("KILL AÉRIEN", 45 * m4, true)
-	if aerial and tree.has("m4"):
+	if aerial and tree.has("m_a4"):
 		player.roll_cd = 0.0
+	_tree_on_kill(en, c, ctx, aerial)
 	if player.roll_t > 0.0 or player.roll_grace > 0.0: add_style("ROULADE MORTELLE", 40, true)
 	if player.slide_t > 0.0: add_style("GLISSADE", 40, true)
 	match src:
@@ -718,8 +930,10 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 		"ric": add_style("RICOCHET", 25)
 		"boom": add_style("RÉACTION EN CHAÎNE", 20)
 		"fall": add_style("CHUTE", 30)
-	if skill_t > 0.0 and tree.has("s4"):
-		skill_t += 0.5
+	if skill_t > 0.0:
+		surge_kills += 1
+		if tree.has("s_r3"):
+			skill_t += 0.5
 	recent_kills = recent_kills.filter(func(t): return gt - t < 0.6)
 	recent_kills.append(gt)
 	if recent_kills.size() == 3: add_style("MULTI-KILL", 70, true)
@@ -749,12 +963,47 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 		player.hp = minf(up.max_hp, player.hp + 40.0)
 		if not en.is_mini:
 			# le boss de zone emporte ses renforts avec lui
+			city.calm()
+			_clear_hazards()
 			to_spawn.clear()
 			for o in enemies.duplicate():
 				if is_instance_valid(o) and o.alive:
+					o.reformed = true
 					kill_enemy(o, { "src": "boom" })
 	elif randf() < 0.07:
 		_drop_pickup(c)
+
+func _tree_on_kill(en, c: Vector3, ctx: Dictionary, aerial: bool) -> void:
+	var close: bool = c.distance_to(player.global_position + Vector3(0, 1, 0)) < 4.0
+	var leech := 2.0 if tree.has("v_r4") and player.hp < up.max_hp * 0.25 else 1.0
+	if close and tree.has("w_t1"):
+		player.ammo = player.W.mag
+		player.reload_t = 0.0
+	if close and tree.has("w_b3"):
+		player.ammo = mini(player.W.mag, player.ammo + 2)
+	if close and tree.has("v_r2"):
+		player.hp = minf(up.max_hp, player.hp + 4.0 * leech)
+	if aerial and tree.has("v_t2"):
+		player.hp = minf(up.max_hp, player.hp + 5.0 * leech)
+	if ctx.get("head", false) and tree.has("v_s2"):
+		armor_t = 2.0
+	if ctx.get("exec", false) and tree.has("w_v4"):
+		# Sentence : l'exécution fait exploser la cible
+		shockwave(c, Color("3fd0c9"), 4.0)
+		burst(c, Color("3fd0c9"), 20, 10.0)
+		sfx.play("boom")
+		for o in enemies.duplicate():
+			if is_instance_valid(o) and o.alive and o != en and o.center().distance_to(c) < 4.0:
+				damage_enemy(o, 50.0 + 6.0 * wave, o.center(), { "src": "boom" })
+
+func dmg_bonus() -> float:
+	# bonus de dégâts de l'arbre, lu par player.shoot
+	var m := 1.0
+	if tree.has("v_r1") and player.hp < up.max_hp * 0.5:
+		m *= 1.25
+	if tree.has("v_r4") and player.hp < up.max_hp * 0.25:
+		m *= 1.4
+	return m
 
 func gain_xp(n: int) -> void:
 	xp += n
@@ -812,7 +1061,7 @@ func launch_mag(t, origin: Vector3, dir: Vector3) -> void:
 	# le chargeur part comme une roquette vers l'ennemi le plus proche du viseur
 	var target = _best_target(origin, dir, [])
 	t.launch(target, dir)
-	if tree.has("w4"):
+	if tree.has("s_d2") and skill_t > 0.0:
 		# Pluie d'acier : deux éclats partent vers d'autres ennemis
 		var skip := [target]
 		for k in 2:
@@ -863,6 +1112,95 @@ func fire_shot(from: Vector3, dir: Vector3, speed: float, dmg: float, color: Col
 	s.color = color
 	world.add_child(s)
 	s.global_position = from
+
+# ---------- Dangers au sol (fonderie) ----------
+func add_puddle(pos: Vector3, r: float, life: float, dps: float, delay := 0.0) -> void:
+	# flaque de métal en fusion, précédée d'un cercle d'alerte quand elle tombe du ciel
+	var ground := Vector3(pos.x, 0.0, pos.z)
+	var q := PhysicsRayQueryParameters3D.create(Vector3(pos.x, pos.y + 1.0, pos.z), Vector3(pos.x, pos.y - 30.0, pos.z), 1)
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	if hit:
+		ground = hit.position
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new(); cm.top_radius = r; cm.bottom_radius = r; cm.height = 0.06
+	mi.mesh = cm
+	var m := _unshaded(Color("ff7a1a"), 3.0)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	world.add_child(mi)
+	mi.global_position = ground + Vector3(0, 0.04, 0)
+	if delay > 0.0:
+		m.albedo_color = Color(1.0, 0.48, 0.1, 0.25)
+		mi.scale = Vector3(1, 0.3, 1)
+	hazards.append({ "pos": ground, "r": r, "life": life, "dps": dps, "delay": delay, "node": mi, "mat": m })
+
+func add_ring(center: Vector3, spd: float, max_r: float, dmg: float, delay := 0.0) -> void:
+	# onde de coulée qui s'étend au sol : il faut sauter par-dessus
+	var mi := MeshInstance3D.new()
+	var tm := TorusMesh.new(); tm.inner_radius = 0.82; tm.outer_radius = 1.0; tm.rings = 48
+	mi.mesh = tm
+	mi.material_override = _unshaded(Color("ff7a1a"), 4.0)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mi.visible = delay <= 0.0
+	world.add_child(mi)
+	mi.global_position = Vector3(center.x, 0.25, center.z)
+	rings.append({ "c": Vector3(center.x, 0.0, center.z), "r": 1.0, "spd": spd, "max": max_r, "dmg": dmg, "delay": delay, "hit": false, "node": mi })
+
+func _clear_hazards() -> void:
+	for h in hazards + rings:
+		if is_instance_valid(h.node):
+			h.node.queue_free()
+	hazards.clear()
+	rings.clear()
+	flood_warned = false
+
+func _update_hazards(delta: float) -> void:
+	var d := delta * enemy_slow
+	var pp: Vector3 = player.global_position
+	var dps := 0.0
+	for h in hazards.duplicate():
+		if h.delay > 0.0:
+			h.delay -= d
+			h.mat.albedo_color.a = 0.25 + 0.3 * sin(gt * 20.0) * sin(gt * 20.0)
+			if h.delay <= 0.0:
+				h.node.scale = Vector3.ONE
+				h.mat.albedo_color = Color(1.0, 0.48, 0.1, 0.95)
+				burst(h.pos + Vector3(0, 0.3, 0), Color("ff7a1a"), 8, 5.0)
+			continue
+		h.life -= d
+		if h.life < 1.0:
+			h.mat.albedo_color.a = maxf(0.0, h.life) * 0.95
+		if h.life <= 0.0:
+			h.node.queue_free()
+			hazards.erase(h)
+			continue
+		if Vector2(pp.x - h.pos.x, pp.z - h.pos.z).length() < h.r and pp.y - h.pos.y < 0.6:
+			dps = maxf(dps, h.dps)
+	for g in rings.duplicate():
+		if g.delay > 0.0:
+			g.delay -= d
+			g.node.visible = g.delay <= 0.0
+			continue
+		g.r += g.spd * d
+		g.node.scale = Vector3(g.r, 1.0, g.r)
+		var hd := Vector2(pp.x - g.c.x, pp.z - g.c.z).length()
+		if not g.hit and absf(hd - g.r) < 0.8 and pp.y < 0.9:
+			g.hit = true
+			hurt_player(g.dmg)
+		if g.r >= g.max:
+			g.node.queue_free()
+			rings.erase(g)
+	dps = maxf(dps, city.hazard_at(pp, player.is_on_floor()))
+	var warn: bool = city.has_method("flood_warning") and city.flood_warning()
+	if warn and not flood_warned:
+		hud.banner("La coulée arrive", "Monte en hauteur")
+		sfx.play("charge")
+	flood_warned = warn
+	hazard_tick -= delta
+	if dps > 0.0 and hazard_tick <= 0.0:
+		hazard_tick = 0.3
+		hurt_player(dps * 0.3, true)
 
 func ray_world(from: Vector3, to: Vector3) -> bool:
 	var q := PhysicsRayQueryParameters3D.create(from, to, 1)
@@ -1005,6 +1343,10 @@ func apply_augment(id: String) -> void:
 		"regen": up.regen += 1.5
 		"boom": up.explode += 1
 		"greed": up.credit_mult += 0.3
+		"barrel": W.spread *= 0.7
+		"trigger": W.rate /= 1.12
+		"bolt": W.reload *= 0.8
+		"ext": W.mag = roundi(W.mag * 1.25); player.ammo = W.mag
 		"r_pierce": up.pierce += 1
 		"r_lynx": up.crit += 1.0
 		"r_last": up.last_shots += 5
@@ -1025,12 +1367,8 @@ func open_shop() -> void:
 	var n_taken := 0
 	for id in taken:
 		n_taken += taken[id]
-	for a in _roll_augments(2):
+	for a in _roll_augments(3):
 		shop_offers.append({ "kind": "aug", "id": a.id, "name": a.name, "desc": a.desc, "tag": player.W.name if a.has("weapon") else "Augment · " + a.tag, "price": Data.AUG_PRICE + 15 * n_taken, "data": a })
-	var free_mods := Data.MODS.filter(func(m): return not mods.has(m.id))
-	if not free_mods.is_empty():
-		var m: Dictionary = free_mods[randi() % free_mods.size()]
-		shop_offers.append({ "kind": "mod", "id": m.id, "name": m.name, "desc": m.desc, "tag": "Mod d'arme", "price": m.price })
 	shop_offers.append({ "kind": "upgrade", "id": "upgrade", "name": "%s niv. %d" % [player.W.name, weapon_level + 1], "desc": "+15 % de dégâts, +10 % de balles par chargeur", "tag": "Arme supérieure", "price": Data.UPGRADE_PRICE + 80 * (weapon_level - 1) })
 	for h in Data.HEALS:
 		shop_offers.append({ "kind": "heal", "id": h.id, "name": h.name, "desc": h.desc, "tag": "Soin", "price": h.price })
@@ -1061,13 +1399,6 @@ func buy(i: int) -> void:
 	var W: Dictionary = player.W
 	match o.kind:
 		"aug": _take_augment(o.data)
-		"mod":
-			mods[o.id] = true
-			match o.id:
-				"mod_barrel": W.spread *= 0.7
-				"mod_trigger": W.rate /= 1.12
-				"mod_bolt": W.reload *= 0.8
-				"mod_ext": W.mag = roundi(W.mag * 1.25); player.ammo = W.mag
 		"upgrade":
 			weapon_level += 1
 			W.dmg *= 1.15
@@ -1080,15 +1411,15 @@ func buy(i: int) -> void:
 # ---------- Arbre de compétences ----------
 func open_tree() -> void:
 	music.play("augment")
-	hud.show_tree(Data.CHARACTERS[character], Data.TREE[character], tree, points, level)
+	hud.show_tree(Data.CHARACTERS[character], Data.TREE[character], Data.tree_nodes(character), tree, points, level, player.W.id)
 
 func can_take(id: String) -> bool:
-	for br in Data.TREE[character]:
-		var prev := ""
-		for n in br.nodes:
-			if n.id == id:
-				return not tree.has(id) and (prev == "" or tree.has(prev))
-			prev = n.id
+	for n in Data.tree_nodes(character):
+		if n.id == id:
+			# les sous-branches d'arme ne servent qu'avec cette arme
+			if n.weapon != "" and n.weapon != player.W.id:
+				return false
+			return not tree.has(id) and (n.req == "" or tree.has(n.req))
 	return false
 
 func pick_tree(id: String) -> void:
@@ -1100,15 +1431,18 @@ func pick_tree(id: String) -> void:
 	sfx.play("level")
 	var W: Dictionary = player.W
 	match id:
-		"s1": up.skill_gain *= 1.25
-		"s2": up.skill_time += 2.0
-		"w1": W.dmg *= 1.12
-		"w2": W.reload *= 0.85
-		"w3": up.mag_boom += 0.4
-		"m1": up.wallrun *= 1.5
-		"m2": up.roll_cd *= 0.8
-		"m3": up.speed *= 1.08; up.slide_boost *= 1.15
-	# s3, s4, w4, m4 : effets lus directement dans tree
+		"w_t2": up.mag_boom += 0.4
+		"w_b1": W.mag += 2; player.ammo = W.mag
+		"w_b2": up.recoil_jump += 1
+		"s_t1": up.skill_gain *= 1.25
+		"s_t2": up.skill_time += 2.0
+		"v_t1": up.max_hp += 25.0; player.hp += 25.0
+		"v_s1": shield = 25.0
+		"v_s3": up.regen += 1.0
+		"m_t1": up.wallrun *= 1.5
+		"m_t2": up.roll_cd *= 0.8
+		"m_g1": up.speed *= 1.08
+	# les autres nœuds sont lus directement dans tree (main.gd et player.gd)
 	if points <= 0:
 		next_between()
 	else:
@@ -1130,7 +1464,20 @@ func _clear_round() -> void:
 	to_spawn.clear()
 	for e in enemies.duplicate():
 		if is_instance_valid(e) and e.alive:
+			e.reformed = true
 			kill_enemy(e, {})
+
+func _advance_to(w: int, tag: String) -> void:
+	# nettoie les rounds jusqu'à atteindre le round w
+	var guard := 0
+	while wave < w and guard < 20:
+		guard += 1
+		_clear_round()
+		await _wait(0.3)
+		await _drain_between("%s%d" % [tag, wave])
+		await _wait(2.6)
+		if wave < w and wave >= 6 and wave <= 9:
+			print("[z2] wave=%d mix=%s" % [wave, ", ".join(enemies.map(func(e): return e.type_name))])
 
 func _drain_between(tag: String) -> void:
 	# passe les écrans de fin de round en achetant / choisissant le premier choix
@@ -1148,10 +1495,9 @@ func _drain_between(tag: String) -> void:
 				print("[%s] bought=%s" % [tag, ", ".join(shop_offers.filter(func(o): return o.get("sold", false)).map(func(o): return o.id))])
 				next_between()
 			"tree":
-				for br in Data.TREE[character]:
-					for n in br.nodes:
-						if points > 0 and can_take(n.id):
-							pick_tree(n.id)
+				for n in Data.tree_nodes(character):
+					if points > 0 and can_take(n.id):
+						pick_tree(n.id)
 				print("[%s] tree=%s" % [tag, tree.keys()])
 				if state == "between" and screen == "tree":
 					next_between()
@@ -1160,7 +1506,7 @@ func _drain_between(tag: String) -> void:
 func _showcase() -> void:
 	# captures des armes, puis des ennemis et des boss figés devant la caméra
 	await _wait(1.0)
-	for w in Data.WEAPON_ORDER:
+	for w in (Data.WEAPON_ORDER if zone_idx == 0 else ["rifle"]):
 		start_with(w)
 		_clear_round()
 		player.global_position = Vector3(-30, 0.1, 10)
@@ -1177,11 +1523,16 @@ func _showcase() -> void:
 	player.yaw = 0.0
 	player.pitch = 0.02
 	var types := ["grunt", "runner", "brute", "spitter", "shield", "hacker", "sniper", "drone", "pub"]
+	if zone().arena == "foundry":
+		types = ["grunt", "runner", "furnace", "golem", "brute", "shield", "spitter", "drone", "arm"]
 	for i in types.size():
 		spawn_enemy(types[i], 1.0)
 		var e = enemies[-1]
 		e.spawn_t = 0.0
+		e.arm_angle = -PI / 2.0
 		e.global_position = Vector3(-10.0 + i * 2.5, 2.2 if Data.ENEMIES[types[i]].get("fly", false) else 0.05, 9.0)
+		if types[i] == "arm":
+			e.global_position = Vector3(10.0, 0.05, 4.0)
 	await _wait(0.6)
 	await _shot("lineup")
 	_clear_round()
@@ -1203,13 +1554,177 @@ func _showcase() -> void:
 	await _wait(0.5)
 	await _wait(0.1)
 	await _shot("collapse")
+	# écran de l'arbre en flocon, avec quelques nœuds pris
+	for id in ["w_t1", "w_t2", "w_v1", "s_t1", "s_t2", "s_d1", "v_t1", "m_t1", "m_t2", "m_a1", "m_a2"]:
+		tree[id] = true
+	state = "between"; screen = "tree"; points = 4; level = 12
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	open_tree()
+	await _wait(0.3)
+	await _shot("tree")
 	get_tree().quit()
+
+func _check_spawns(tag: String) -> void:
+	# aucune position d'apparition dans le décor ; l'ancien tirage au hasard en donnait
+	var bad := 0
+	var old_bad := 0
+	for i in 400:
+		var p := spawn_pos(18.0, false, 0.9, 2.4)
+		if not is_free(p, 0.9, 2.4):
+			bad += 1
+		var a := randf() * TAU
+		var d := 26.0 + randf() * 11.0
+		if not is_free(Vector3(clampf(cos(a) * d, -37.0, 37.0), 0.05, clampf(sin(a) * d, -37.0, 37.0)), 0.9, 2.4):
+			old_bad += 1
+	print("[%s] spawns in scenery=%d / 400 (old method: %d / 400)" % [tag, bad, old_bad])
+
+func _zone2_test() -> void:
+	await _wait(1.0)
+	print("[z2] zone=%d name=%s arena=%s state=%s wave=%d level=%d credits=%d" % [zone_idx, zone().name, city.get_script().resource_path.get_file(), state, wave, level, credits])
+	_check_spawns("z2")
+	await _wait(3.0)
+	await _shot("z2_round1")
+	print("[z2] wave=%d enemies=%s" % [wave, ", ".join(enemies.map(func(e): return e.type_name))])
+	_clear_round()
+	await _wait(0.2)
+	intermission = 999.0
+	# bras mécanique : le joueur est sur sa trajectoire, il doit être touché
+	spawn_enemy("arm", 1.0)
+	var arm = enemies[-1]
+	arm.spawn_t = 0.0
+	var anc: Vector3 = arm.global_position
+	player.global_position = anc + Vector3(4.0, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	var hp0: float = player.hp
+	await _wait(5.0)
+	print("[z2] arm on anchor=%s hit=%s" % [city.anchors.has(anc - Vector3(0, 0.05, 0)), player.hp < hp0])
+	_clear_round()
+	# ouvrier-fournaise : il sème des flaques
+	spawn_enemy("furnace", 1.0)
+	var fw = enemies[-1]
+	fw.spawn_t = 0.0
+	fw.ability_cd = 0.0
+	player.global_position = Vector3(0, 1.3, 0)
+	await _wait(1.0)
+	print("[z2] puddles=%d" % hazards.size())
+	if hazards.size() > 0:
+		var pz: Vector3 = hazards[0].pos
+		hp0 = player.hp
+		player.global_position = pz + Vector3(0, 0.1, 0)
+		await _wait(0.8)
+		print("[z2] puddle burns=%s" % (player.hp < hp0))
+	_clear_round()
+	_clear_hazards()
+	# golem : se reforme une fois
+	spawn_enemy("golem", 1.0)
+	var gol = enemies[-1]
+	gol.spawn_t = 0.0
+	kill_enemy(gol, {})
+	print("[z2] golem after 1st kill alive=%s reformed=%s" % [gol.alive, gol.reformed])
+	await _wait(2.0)
+	kill_enemy(gol, {})
+	print("[z2] golem after 2nd kill alive=%s" % gol.alive)
+	intermission = 0.5
+	await _advance_to(5, "z2r")
+	await _wait(1.0)
+	print("[z2] now wave=%d boss=%s" % [wave, boss.T.name if boss else "-"])
+	if boss:
+		player.global_position = Vector3(0, 1.3, 8)
+		await _wait(6.0)
+		await _shot("z2_miniboss")
+		boss.hp = boss.max_hp * 0.4
+		await _wait(0.3)
+		print("[z2] miniboss phase2=%s hazards=%d rings=%d" % [boss.phase2, hazards.size(), rings.size()])
+	await _advance_to(8, "z2r")
+	await _wait(1.5)
+	await _shot("z2_round8")
+	await _advance_to(10, "z2r")
+	await _wait(3.0)
+	print("[z2] wave=%d boss=%s" % [wave, boss.T.name if boss else "-"])
+	if boss:
+		player.global_position = Vector3(0, 1.3, 14)
+		player.yaw = 0.0
+		player.pitch = 0.1
+		await _wait(2.0)
+		await _shot("z2_boss")
+		boss.hp = boss.max_hp * 0.45
+		await _wait(0.5)
+		print("[z2] boss phase2=%s collapsed=%s" % [boss.phase2, city.collapsed])
+		# attendre la coulée : au sol on brûle, sur l'îlot central on est à l'abri
+		player.global_position = Vector3(10, 0.1, 10)
+		var guard := 0
+		while not city.flooding() and guard < 400:
+			guard += 1
+			await get_tree().physics_frame
+		await _wait(0.6)
+		hp0 = player.hp
+		await _wait(0.8)
+		print("[z2] flood on=%s ground burns=%s" % [city.flooding(), player.hp < hp0])
+		await _shot("z2_flood")
+		player.global_position = Vector3(0, 1.4, 0)
+		player.velocity = Vector3.ZERO
+		await _wait(0.3)
+		hp0 = player.hp
+		_clear_hazards()
+		rings.clear()
+		await _wait(0.8)
+		print("[z2] on island safe=%s y=%.2f" % [player.hp >= hp0, player.global_position.y])
+		kill_enemy(boss, {})
+		await _wait(0.5)
+
+func _tree_test() -> void:
+	# quelques effets de l'arbre, sur une partie neuve au fusil (Verdict)
+	start_with("rifle")
+	await _wait(1.0)
+	_clear_round()
+	intermission = 999.0
+	for id in ["v_t1", "v_t2", "v_s1", "v_s2", "v_s3", "v_s4", "w_t1", "w_t2", "w_v1", "w_v2", "m_t1", "m_t2", "m_a1", "m_a2"]:
+		state = "between"; screen = "tree"; points = 1
+		pick_tree(id)
+	state = "play"
+	print("[tree] owned=%d max_hp=%d shield=%d" % [tree.size(), int(up.max_hp), int(shield)])
+	print("[tree] can take uzi node with rifle=%s" % can_take("w_j1"))
+	player.hp = 50.0
+	hurt_player(20.0, true)
+	print("[tree] shield absorbs: hp=%d shield=%d" % [int(player.hp), int(shield)])
+	hurt_player(500.0, true)
+	print("[tree] second wind: hp=%d state=%s" % [int(player.hp), state])
+	spawn_enemy("grunt", 1.0)
+	var g = enemies[-1]
+	g.spawn_t = 0.0
+	g.global_position = Vector3(0, 0.05, 8)
+	player.global_position = Vector3(0, 0.1, 14)
+	player.yaw = 0.0
+	await _wait(0.3)
+	g.hp = g.max_hp * 0.35
+	var d: Vector3 = g.global_position + Vector3(0, g.T.h * 0.9, 0) - player.eye_position()
+	player.yaw = atan2(-d.x, -d.z)
+	player.pitch = atan2(d.y, Vector2(d.x, d.z).length())
+	player.rotation.y = player.yaw
+	player.head.rotation.x = player.pitch
+	await get_tree().physics_frame
+	var ammo0: int = player.ammo
+	player.fire_cd = 0.0
+	player.W.spread = 0.0
+	player.shoot()
+	print("[tree] execution: alive=%s ammo %d -> %d" % [g.alive, ammo0, player.ammo])
+	player.global_position = Vector3(0, 12, 20)
+	player.velocity = Vector3.ZERO
+	player.forced_intent = { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "jump_hold": true, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	await _wait(1.0)
+	print("[tree] glide vy=%.1f" % player.velocity.y)
+	player.forced_intent = {}
+	state = "between"; screen = "tree"; points = 3
+	open_tree()
+	await _wait(0.3)
+	await _shot("tree")
 
 func _autotest() -> void:
 	print("AUTOTEST start")
 	if OS.get_environment("HB_SHOTS") != "":
 		Engine.max_physics_steps_per_frame = 40
 	await _wait(1.5)
+	pick_zone(0)
 	await _shot("menu")
 	var wid: String = Data.WEAPON_ORDER[0]
 	start_with(wid)
@@ -1217,6 +1732,7 @@ func _autotest() -> void:
 	player.hp = 1e9
 	up.max_hp = 1e9
 	print("[run] wave=%d enemies=%d" % [wave, enemies.size()])
+	_check_spawns("z1")
 	await _shot("round1")
 	for k in 10:
 		player.shoot()
@@ -1319,8 +1835,13 @@ func _autotest() -> void:
 		await _shot("collapse")
 		kill_enemy(boss, {})
 		await _wait(0.5)
+	print("[run] after zone 1 boss state=%s screen=%s between=%s" % [state, screen, str(between)])
+	await _drain_between("z1end")
+	await _zone2_test()
 	print("[run] state=%s level=%d credits=%d score=%d" % [state, level, credits, score])
+	print("[run] tree points spent=%d nodes=%s" % [tree.size(), ", ".join(tree.keys())])
 	await _shot("victory")
+	await _tree_test()
 	# les deux autres armes : départ, tir, mort
 	for w2 in Data.WEAPON_ORDER.slice(1):
 		start_with(w2)
