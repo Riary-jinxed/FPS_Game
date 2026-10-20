@@ -72,6 +72,9 @@ var level := 1
 var points := 0
 var tree := {}
 var shield := 0.0          # Survie > Bouclier
+var mods := {}             # mods de l'arme { emplacement: id }
+var roll_elem := 0         # mod Roulade : impacts élémentaires restants
+var mod_fires: Array = []  # flammes au sol du mod Incendiaire
 var calm_t := 0.0          # temps depuis le dernier coup reçu
 var armor_t := 0.0         # Survie > Armure d'exécuteur
 var second_wind := false   # Survie > Second souffle, déjà utilisé ce round
@@ -427,6 +430,9 @@ func start_with(id: String) -> void:
 func reset_game() -> void:
 	for c in world.get_children():
 		c.queue_free()
+	mods = {}
+	roll_elem = 0
+	mod_fires.clear()
 	enemies.clear()
 	pickups.clear()
 	bonus_t = 12.0
@@ -756,6 +762,7 @@ func _process(delta: float) -> void:
 	if tree.has("v_s1") and calm_t > 4.0:
 		shield = minf(25.0, shield + 12.0 * delta)
 	_slide_hits()
+	_update_mod_fires(delta)
 	if glitch_t > 0.0:
 		glitch_t -= delta
 	_update_pads(delta)
@@ -1196,6 +1203,8 @@ func damage_enemy(en, dmg: float, at: Vector3, ctx := {}) -> void:
 	dmg *= kit.dmg_mult(en, ctx)
 	en.hp -= dmg
 	en.flash_t = 0.08
+	if ctx.get("src", "") == "gun" and (not mods.is_empty() or roll_elem > 0):
+		_mod_hit(en, dmg, at)
 	if not ctx.get("quiet", false):
 		burst(at, en.T.color, 4 if en.is_boss else 3, 4.0)
 	if en.hp <= 0.0:
@@ -1257,6 +1266,8 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 		for o in enemies.duplicate():
 			if is_instance_valid(o) and o.alive and o != en and o.center().distance_to(c) < 3.5:
 				damage_enemy(o, power, o.center(), { "src": "boom" })
+	if src == "gun" and has_mod("m_frag"):
+		get_tree().create_timer(0.05, false).timeout.connect(func(): mod_blast(c, 2.6, player.W.dmg * dmg_bonus() * 0.8))
 	if src in ["boom", "mag", "dot"]:
 		boom_kills += 1
 		var f := Engine.get_physics_frames()
@@ -1343,6 +1354,97 @@ func kamikaze_blast(en) -> void:
 	en.queue_free()
 	if c.distance_to(player.global_position + Vector3(0, 1, 0)) < 3.0:
 		hurt_player(en.T.dmg)
+
+# ---------- Mods d'armes ----------
+func has_mod(id: String) -> bool:
+	return mods.values().has(id)
+
+func _mod_hit(en, dmg: float, at: Vector3) -> void:
+	var fire := has_mod("m_fire")
+	var arc := has_mod("m_arc")
+	if roll_elem > 0:
+		roll_elem -= 1
+		fire = true
+		arc = true
+	if fire:
+		if en.hp > 0.0:
+			en.bleed(dmg * 0.3, 2.0)
+		if mod_fires.size() < 12 and (mod_fires.is_empty() or mod_fires[-1].pos.distance_to(at) > 1.5):
+			var g := Vector3(at.x, 0.0, at.z)
+			var q := PhysicsRayQueryParameters3D.create(at + Vector3(0, 0.3, 0), at + Vector3(0, -30, 0), 1)
+			var hit := get_world_3d().direct_space_state.intersect_ray(q)
+			if hit:
+				g = hit.position
+			var mi := MeshInstance3D.new()
+			var cm := CylinderMesh.new(); cm.top_radius = 1.4; cm.bottom_radius = 1.4; cm.height = 0.04
+			mi.mesh = cm
+			mi.material_override = _unshaded(Color("ff6a2a"), 2.0)
+			world.add_child(mi)
+			mi.global_position = g + Vector3(0, 0.07, 0)
+			mod_fires.append({ "pos": g, "t": 2.5, "node": mi, "tick": 0.0 })
+	if arc:
+		var n := 0
+		for o in enemies.duplicate():
+			if n >= 2:
+				break
+			if o != en and is_instance_valid(o) and o.alive and o.center().distance_to(at) < 6.0:
+				n += 1
+				tracer(at, o.center(), Color("9fe8ff"))
+				damage_enemy(o, dmg * 0.35, o.center(), { "src": "arc", "quiet": true })
+	if has_mod("m_cryo") and is_instance_valid(en) and en.alive:
+		en.slow(1.5, 0.55)
+		var hits: Array = en.get_meta("cryo", [])
+		hits = hits.filter(func(t): return gt - t < 1.5)
+		hits.append(gt)
+		if hits.size() >= 3:
+			hits.clear()
+			en.stun(1.5)
+			burst(en.center(), Color("bfefff"), 10, 5.0)
+		en.set_meta("cryo", hits)
+
+func _update_mod_fires(delta: float) -> void:
+	for f in mod_fires.duplicate():
+		f.t -= delta
+		f.tick -= delta
+		if f.t <= 0.0:
+			mod_fires.erase(f)
+			if is_instance_valid(f.node):
+				f.node.queue_free()
+			continue
+		if f.tick <= 0.0:
+			f.tick = 0.3
+			for e in enemies.duplicate():
+				if is_instance_valid(e) and e.alive and Vector2(e.global_position.x - f.pos.x, e.global_position.z - f.pos.z).length() < 1.4 + e.T.r and absf(e.global_position.y - f.pos.y) < 1.5:
+					damage_enemy(e, 4.0 + 0.6 * wave, e.center(), { "src": "dot", "quiet": true })
+
+func mod_blast(at: Vector3, r: float, dmg: float) -> void:
+	shockwave(at, Color("ffb35c"), r)
+	sfx.play("boom")
+	for e in enemies.duplicate():
+		if is_instance_valid(e) and e.alive and e.center().distance_to(at) < r + e.T.r:
+			damage_enemy(e, dmg, e.center(), { "src": "boom" })
+
+func mod_reload_shock() -> void:
+	var c: Vector3 = player.global_position + Vector3(0, 0.9, 0)
+	shockwave(c, Color("9fe8ff"), 5.0)
+	sfx.play("dash")
+	for e in enemies.duplicate():
+		if is_instance_valid(e) and e.alive and e.center().distance_to(c) < 5.0 + e.T.r:
+			var away: Vector3 = e.global_position - player.global_position
+			damage_enemy(e, 10.0 + 2.0 * wave, e.center(), { "src": "boom", "quiet": true })
+			knockback(e, Vector3(away.x, 0, away.z), 4.0)
+
+func mod_wall_bounce(at: Vector3, dir: Vector3, n: Vector3, dmg: float) -> void:
+	# mod Rebond : la balle repart du mur
+	var d2: Vector3 = dir.bounce(n)
+	var from: Vector3 = at + n * 0.05
+	var q := PhysicsRayQueryParameters3D.create(from, from + d2 * 50.0, 1 | 2, [player.get_rid()])
+	var r := get_world_3d().direct_space_state.intersect_ray(q)
+	var end: Vector3 = r.position if r else from + d2 * 50.0
+	tracer(from, end, Color("ffd28a"))
+	if r and r.collider.get("alive") != null:
+		damage_enemy(r.collider, dmg * 0.8, r.position, { "src": "ric" })
+		hud.hitmark()
 
 func ricochet(from, at: Vector3, dmg: float) -> void:
 	var best_e = null
@@ -1699,18 +1801,34 @@ func open_shop() -> void:
 		n_taken += taken[id]
 	for a in _roll_augments(2):
 		shop_offers.append({ "kind": "aug", "id": a.id, "name": a.name, "desc": a.desc, "tag": player.W.name if a.has("weapon") else "Augment · " + a.tag, "price": Data.AUG_PRICE + 15 * n_taken, "data": a })
+	# 2 mods compatibles avec l'arme, pas déjà montés
+	var pool: Array = Data.MODS.filter(func(m): return Data.mod_ok(m, player.W) and not has_mod(m.id))
+	pool.shuffle()
+	for m in pool.slice(0, 2):
+		var cur: String = mods.get(m.slot, "")
+		var cur_name := ""
+		for o in Data.MODS:
+			if o.id == cur:
+				cur_name = o.name
+		shop_offers.append({ "kind": "mod", "id": m.id, "name": m.name, "desc": m.desc + (" Remplace %s." % cur_name if cur_name != "" else ""),
+			"tag": "Mod · " + Data.MOD_SLOTS[m.slot], "price": Data.MOD_PRICE + 25 * zone_idx, "data": m })
 	var others: Array = Data.GENERICS.filter(func(g): return g != player.W.id)
 	if not others.is_empty():
 		var gid: String = others[randi() % others.size()]
 		var GW: Dictionary = Data.WEAPONS[gid]
-		shop_offers.append({ "kind": "weapon", "id": gid, "name": GW.name, "desc": GW.blurb + " Remplace ton arme actuelle (augments communs gardés).", "tag": "Arme générique", "price": Data.WEAPON_PRICE + 40 * zone_idx })
+		shop_offers.append({ "kind": "weapon", "id": gid, "name": GW.name, "desc": GW.blurb + " Remplace ton arme, mods perdus.", "tag": "Arme générique", "price": Data.WEAPON_PRICE + 40 * zone_idx })
 	shop_offers.append({ "kind": "upgrade", "id": "upgrade", "name": "%s niv. %d" % [player.W.name, weapon_level + 1], "desc": "+15 % de dégâts, +10 % de balles par chargeur", "tag": "Arme supérieure", "price": Data.UPGRADE_PRICE + 80 * (weapon_level - 1) })
 	for h in Data.HEALS:
 		shop_offers.append({ "kind": "heal", "id": h.id, "name": h.name, "desc": h.desc, "tag": "Soin", "price": h.price })
 	_refresh_shop()
 
 func _refresh_shop() -> void:
-	hud.show_shop(shop_offers, credits, maxi(0, ceili(player.hp)), int(up.max_hp), "Round %d nettoyé · prochain shop au round %d" % [wave, _next_shop()])
+	var on := []
+	for slot in Data.MOD_SLOTS:
+		for m in Data.MODS:
+			if m.id == mods.get(slot, ""):
+				on.append(m.name)
+	hud.show_shop(shop_offers, credits, maxi(0, ceili(player.hp)), int(up.max_hp), "Round %d nettoyé · prochain shop au round %d" % [wave, _next_shop()] + (" · mods : " + ", ".join(on) if on.size() > 0 else ""))
 
 func _next_shop() -> int:
 	for r in Data.SHOP_ROUNDS:
@@ -1734,6 +1852,9 @@ func buy(i: int) -> void:
 	var W: Dictionary = player.W
 	match o.kind:
 		"aug": _take_augment(o.data)
+		"mod":
+			mods[o.data.slot] = o.id
+			hud.add_feed("MOD " + o.name.to_upper(), true)
 		"weapon":
 			_swap_weapon(o.id)
 		"upgrade":
@@ -1750,6 +1871,7 @@ func _swap_weapon(id: String) -> void:
 	# communs ou propres à cette arme (ceux d'une autre arme sont perdus)
 	var W: Dictionary = Data.WEAPONS[id].duplicate(true)
 	player.set_weapon(W)
+	mods = {}
 	for k in weapon_level - 1:
 		W.dmg *= 1.15
 		W.mag = roundi(W.mag * 1.1)
@@ -2189,7 +2311,7 @@ func _chars_only() -> void:
 		to_menu()
 		await _wait(0.5)
 		await _shot("menu_persos")
-		for w in Data.CHARACTERS.nyx.weapons + Data.CHARACTERS.brack.weapons:
+		for w in Data.CHARACTERS.nyx.weapons + Data.CHARACTERS.brack.weapons + Data.CHARACTERS.iris.weapons:
 			start_with(w)
 			_clear_round()
 			player.global_position = Vector3(-30, 0.1, 10)
@@ -2200,6 +2322,8 @@ func _chars_only() -> void:
 	await _wait(1.0)
 	await _nyx_test()
 	await _brack_test()
+	await _iris_test()
+	await _mods_test()
 	print("AUTOTEST done")
 	get_tree().quit()
 
@@ -2343,6 +2467,235 @@ func _brack_test() -> void:
 		await _wait(0.3)
 		await _shot("brack_tree")
 	state = "play"; screen = ""
+	enemy_slow = 1.0
+	player.forced_intent = {}
+	_clear_round()
+
+func _iris_test() -> void:
+	# Iris : achat au Terminal, Aiguille, Patch, Piratage, Mouche, Brouilleur, téléport et leurre
+	var keep: bool = unlock_all
+	unlock_all = false
+	unlocked.erase("iris")
+	datas = 700
+	to_menu()
+	pick_character("iris")
+	print("[iris] bought=%s datas=%d character=%s" % ["iris" in unlocked, datas, character])
+	unlock_all = keep
+	pick_zone(0)
+	await _brack_setup("aiguille")
+	print("[iris] char=%s kit=%s hp=%.0f weapon=%s" % [character, kit.get_script().resource_path.get_file(), Data.CHARACTERS.iris.hp, player.W.name])
+	# Aiguille : charge puis rail à travers 3 brutes alignées
+	var line := []
+	for z in [8.0, 4.0, 0.0]:
+		line.append(_target("brute", Vector3(0.2, 0.05, z)))
+	await _wait(0.2)
+	_aim_at(line[0].center())
+	var hps := line.map(func(e): return e.hp)
+	var it: Dictionary = player.forced_intent.duplicate()
+	it.fire = true
+	player.forced_intent = it
+	await _wait(1.0)
+	var ch: float = kit.charge
+	it = it.duplicate(); it.fire = false
+	player.forced_intent = it
+	await _wait(0.1)
+	var dm := []
+	for k in 3:
+		dm.append(int(hps[k] - line[k].hp) if is_instance_valid(line[k]) and line[k].alive else -1)
+	print("[iris] rail charge=%.2f dmg=%s ammo=%d" % [ch, str(dm), player.ammo])
+	# Patch : marque, et le marquage passe au voisin à la mort
+	await _brack_setup("patch")
+	var a = _target("grunt", Vector3(0.2, 0.05, 8))
+	var b = _target("grunt", Vector3(3.0, 0.05, 8))
+	await _wait(0.2)
+	_aim_at(a.center())
+	player.fire_cd = 0.0
+	player.shoot()
+	var marked: bool = a.mark_t > 0.0
+	damage_enemy(a, 9999.0, a.center(), { "src": "gun" })
+	print("[iris] patch marked=%s spread_to_neighbour=%s" % [marked, b.mark_t > 0.0])
+	# Piratage : les grunts du cône attaquent la brute hors du cône
+	await _brack_setup("patch")
+	enemy_slow = 1.0
+	var g1 = _target("grunt", Vector3(0.0, 0.05, 6))
+	var g2 = _target("grunt", Vector3(1.2, 0.05, 6))
+	var br = _target("brute", Vector3(9.0, 0.05, 6))
+	await _wait(0.2)
+	_aim_at(Vector3(0.6, 1.0, 6))
+	player.skill = 100.0
+	activate_skill()
+	var n_hacked: int = kit.hacked.size()
+	var bhp: float = br.hp
+	await _wait(3.0)
+	print("[iris] hack count=%d g1=%.1f brute dmg=%.0f player_safe=%s" % [n_hacked, g1.hack_t if is_instance_valid(g1) else -1.0, bhp - br.hp if is_instance_valid(br) and br.alive else bhp, player.hp > 1e8])
+	# Mouche : drone posé qui tire seul, puis rappel
+	await _brack_setup("mouche")
+	var b2 = _target("brute", Vector3(0.2, 0.05, 2))
+	await _wait(0.2)
+	_aim_at(Vector3(2.0, 0.0, 9.0))
+	player.fire_cd = 0.0
+	player.shoot()
+	var hp0: float = b2.hp
+	await _wait(2.0)
+	var posted: bool = kit.drones.size() == 1 and kit.drones[0].post != null
+	kit.alt_fire()
+	print("[iris] drone posted=%s dmg=%.0f recalled=%s" % [posted, hp0 - b2.hp, kit.drones[0].post == null])
+	# Brouilleur : marque et coupe les tirs
+	await _brack_setup("patch")
+	var s1 = _target("spitter", Vector3(0.2, 0.05, 8))
+	await _wait(0.2)
+	_aim_at(s1.center())
+	gren_charges = 1
+	throw_grenade()
+	await _wait(0.6)
+	print("[iris] brouilleur marked=%s jammed=%s" % [is_instance_valid(s1) and s1.mark_t > 0.0, is_instance_valid(s1) and s1.jam_t > 0.0])
+	# téléport et leurre
+	state = "between"; screen = "tree"; points = 6
+	for id in ["ir_mt1", "ir_mt2", "ir_mp1", "ir_ml1"]:
+		pick_tree(id)
+	state = "play"; screen = ""
+	player.global_position = Vector3(0, 0.1, 16)
+	player.yaw = 0.0
+	await _wait(0.3)
+	var z0: float = player.global_position.z
+	player.roll_cd = 0.0
+	player.roll()
+	print("[iris] blink moved=%.1f decoy=%s tree=%s" % [z0 - player.global_position.z, kit.decoy_pos() != null, str(tree.keys())])
+	state = "between"; screen = "tree"; points = 2
+	if OS.get_environment("HB_SHOTS") != "":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		open_tree()
+		await _wait(0.3)
+		await _shot("iris_tree")
+	state = "play"; screen = ""
+	enemy_slow = 1.0
+	player.forced_intent = {}
+	_clear_round()
+
+func _mod_shot(e) -> float:
+	# un tir sur e, renvoie les dégâts subis
+	_aim_at(e.center())
+	var h: float = e.hp
+	player.fire_cd = 0.0
+	player.shoot()
+	return h - e.hp if is_instance_valid(e) and e.alive else h
+
+func _mods_test() -> void:
+	# mods d'armes : un test par comportement, au Jumeaux (arme à balles)
+	pick_zone(0)
+	await _brack_setup("jumeaux")
+	mods = { "ammo": "m_arc" }
+	var a = _target("brute", Vector3(0.2, 0.05, 8))
+	var b = _target("brute", Vector3(2.5, 0.05, 8))
+	await _wait(0.2)
+	var bh: float = b.hp
+	_mod_shot(a)
+	print("[mods] arc neighbour dmg=%.0f" % [bh - b.hp])
+	mods = { "ammo": "m_cryo" }
+	for k in 3:
+		_mod_shot(a)
+	print("[mods] cryo slowed=%s frozen=%s" % [a.slow_t > 0.0, a.stun_t > 0.0])
+	mods = { "ammo": "m_fire" }
+	_mod_shot(b)
+	print("[mods] fire patches=%d bleed=%s" % [mod_fires.size(), b.bleed_t > 0.0 if b.get("bleed_t") != null else str(b.get("bleed"))])
+	_clear_round()
+	_target("brute", Vector3(-34, 0.05, -34))
+	mods = { "ammo": "m_frag" }
+	var g = _target("grunt", Vector3(0.2, 0.05, 8))
+	var n = _target("brute", Vector3(1.8, 0.05, 8))
+	await _wait(0.2)
+	g.hp = 1.0
+	var nh: float = n.hp
+	_mod_shot(g)
+	await _wait(0.2)
+	print("[mods] frag killed=%s neighbour dmg=%.0f" % [not (is_instance_valid(g) and g.alive), nh - n.hp])
+	# Rafale : un appui tire 3 balles
+	mods = { "mech": "m_burst" }
+	player.ammo = player.W.mag
+	var a0: int = player.ammo
+	_mod_shot(n)
+	await _wait(0.3)
+	print("[mods] burst shots=%d" % [a0 - player.ammo])
+	# Éventail : 3 balles par tir
+	mods = { "mech": "m_fan" }
+	_clear_round()
+	_target("brute", Vector3(-34, 0.05, -34))
+	var c = _target("brute", Vector3(0.0, 0.05, 6))
+	var l = _target("brute", Vector3(-1.0, 0.05, 6))
+	var r = _target("brute", Vector3(1.0, 0.05, 6))
+	await _wait(0.2)
+	var hs := [c.hp, l.hp, r.hp]
+	_mod_shot(c)
+	print("[mods] fan hit=%d" % [[c, l, r].filter(func(e): return e.hp < hs[[c, l, r].find(e)]).size()])
+	# Charge : tir maintenu puis relâché
+	mods = { "mech": "m_charge" }
+	_aim_at(c.center())
+	var ch: float = c.hp
+	var it: Dictionary = player.forced_intent.duplicate()
+	it.fire = true
+	player.forced_intent = it
+	await _wait(0.8)
+	it = it.duplicate(); it.fire = false
+	player.forced_intent = it
+	await _wait(0.1)
+	print("[mods] charge dmg=%.0f (base %.0f)" % [ch - c.hp, player.W.dmg * dmg_bonus()])
+	# Recharge choc
+	mods = { "trig": "m_shock" }
+	var near = _target("grunt", player.global_position + Vector3(0, 0, -2.0))
+	await _wait(0.1)
+	var d0: float = near.global_position.distance_to(player.global_position)
+	player.ammo = 1
+	player.reload_t = 0.0
+	player.start_reload()
+	print("[mods] shock pushed %.1f -> %.1f" % [d0, near.global_position.distance_to(player.global_position)])
+	damage_enemy(near, 99999.0, near.center(), {})
+	await _wait(1.5)
+	# Dernière balle
+	mods = { "trig": "m_last" }
+	var nb: float = l.hp
+	player.ammo = 1
+	_mod_shot(c)
+	print("[mods] last bullet neighbour dmg=%.0f" % [nb - l.hp])
+	# Roulade
+	mods = { "trig": "m_roll" }
+	player.roll_cd = 0.0
+	player.roll()
+	print("[mods] roll elemental shots=%d" % roll_elem)
+	roll_elem = 0
+	# shop : seulement des mods compatibles
+	start_with("crocs")
+	await _wait(0.3)
+	var bad := 0
+	for k in 20:
+		open_shop()
+		for o in shop_offers:
+			if o.kind == "mod" and not Data.mod_ok(o.data, player.W):
+				bad += 1
+	print("[mods] shop incompatible offers=%d (crocs)" % bad)
+	# Chaîne (Harpon)
+	await _brack_setup("harpon")
+	mods = { "mech": "m_chain" }
+	var h1 = _target("brute", Vector3(0.2, 0.05, 4))
+	await _wait(0.2)
+	_aim_at(h1.center())
+	player.fire_cd = 0.0
+	player.shoot()
+	await _wait(0.1)
+	var dh0: float = h1.global_position.distance_to(player.global_position)
+	kit.alt_fire()
+	print("[mods] chain pulled %.1f -> %.1f" % [dh0, h1.global_position.distance_to(player.global_position)])
+	if OS.get_environment("HB_SHOTS") != "":
+		start_with("jumeaux")
+		await _wait(0.3)
+		mods = { "ammo": "m_arc" }
+		state = "between"; screen = "shop"; credits = 900
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		seed(7)
+		open_shop()
+		await _wait(0.3)
+		await _shot("shop_mods")
+		state = "play"; screen = ""
+	mods = {}
 	enemy_slow = 1.0
 	player.forced_intent = {}
 	_clear_round()
@@ -2673,5 +3026,7 @@ func _autotest() -> void:
 	await _shot("over")
 	await _nyx_test()
 	await _brack_test()
+	await _iris_test()
+	await _mods_test()
 	print("AUTOTEST done")
 	get_tree().quit()

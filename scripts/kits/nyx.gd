@@ -118,6 +118,18 @@ func alt_fire() -> bool:
 	if anchor.is_empty():
 		game.sfx.play("deny")
 		return true
+	if game.has_mod("m_chain") and anchor.en != null:
+		# mod Chaîne : c'est l'ennemi qui vient
+		var en = anchor.en
+		var to: Vector3 = p.global_position - en.global_position
+		to.y = 0.0
+		game.tracer(p.eye_position() + Vector3(0.2, -0.25, 0), anchor.pos, Color("5effc8"))
+		game.knockback(en, to, maxf(0.0, to.length() - 2.5))
+		if is_instance_valid(en) and en.alive:
+			en.stun(0.8)
+		game.add_style("CHAÎNE", 20)
+		_drop_anchor()
+		return true
 	pulling = 1.2
 	game.sfx.play("dash")
 	return true

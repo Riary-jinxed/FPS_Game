@@ -501,7 +501,7 @@ func _build_menu() -> void:
 	var crow := HBoxContainer.new(); crow.add_theme_constant_override("separation", 10)
 	crow.add_child(char_box)
 	test_btn = _button("Mode test : off", false)
-	test_btn.custom_minimum_size = Vector2(250, 40)
+	test_btn.custom_minimum_size = Vector2(190, 40)
 	test_btn.add_theme_font_size_override("font_size", 13)
 	test_btn.tooltip_text = "Débloque tous les persos et toutes les armes, pour tester"
 	test_btn.pressed.connect(func(): unlock_all_toggled.emit())
@@ -549,8 +549,8 @@ func show_menu(character: Dictionary, chars: Array, weapons: Array, chosen: Stri
 		var locked: bool = C.lock != ""
 		var txt: String = C.name.to_upper() + ("  ·  " + C.skill if not locked else "  ·  verrouillé")
 		var cb := _button(txt, C.id == character.id)
-		cb.custom_minimum_size = Vector2(200, 40)
-		cb.add_theme_font_size_override("font_size", 14)
+		cb.custom_minimum_size = Vector2(150, 40)
+		cb.add_theme_font_size_override("font_size", 13)
 		cb.tooltip_text = C.lock if locked else "%s, %s · maîtrise %d" % [C.name, C.title, C.mastery]
 		if locked:
 			cb.modulate = Color(1, 1, 1, 0.45)

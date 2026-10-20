@@ -473,7 +473,11 @@ func _shoot_at_player(from: Vector3, spd: float, dmg: float, col: Color, size :=
 	var p = game.player
 	if jam_t > 0.0 or game.kit.hidden_from(from.distance_to(p.global_position)):
 		return
-	game.fire_shot(from, (p.eye_position() - from).normalized(), spd, dmg, col, size)
+	var aim: Vector3 = p.eye_position()
+	var decoy = game.kit.decoy_pos()
+	if decoy != null:
+		aim = decoy
+	game.fire_shot(from, (aim - from).normalized(), spd, dmg, col, size)
 	game.sfx.play("orb")
 
 func _walk(dist: float, dir: Vector3, d: float) -> void:

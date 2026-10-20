@@ -43,8 +43,18 @@ const CHARACTERS := {
 		"grenade": { "name": "Grappe", "desc": "Grosse charge qui se divise en 4 petites bombes à l'impact.",
 			"cd": 15.0, "dmg": 50.0, "radius": 3.5, "color": "ffa13d" },
 	},
+	"iris": {
+		"id": "iris", "name": "Iris", "title": "la Hackeuse",
+		"blurb": "Elle a écrit la moitié du code de la ville-système. L'autre moitié lui obéit quand même.",
+		"skill": "Piratage", "skill_desc": "Les ennemis dans un cône devant toi se battent pour toi pendant 8 s.",
+		"weapons": ["aiguille", "mouche", "patch"],
+		"skill_time": 8.0, "hp": 100.0, "speed": 1.0, "kit": "res://scripts/kits/iris.gd", "color": Color("c77dff"),
+		"unlock": "Palier du Terminal : 600 Données (clique sur Iris dans le menu pour l'acheter)",
+		"grenade": { "name": "Brouilleur", "desc": "Impulsion qui marque les ennemis et coupe leurs tirs 3 s.",
+			"cd": 15.0, "dmg": 25.0, "radius": 5.0, "color": "c77dff" },
+	},
 }
-const CHARACTER_ORDER := ["kade", "nyx", "brack"]
+const CHARACTER_ORDER := ["kade", "nyx", "brack", "iris"]
 
 # ---------- Maîtrise (méta-progression par perso) ----------
 # La maîtrise monte avec l'XP gagnée en jouant le perso. Le perso commence avec sa 1re arme unique,
@@ -64,7 +74,7 @@ static func mastery_level(mxp: int) -> int:
 # On avance depuis le centre ; un run complet donne environ 22 points, on ne remplit jamais tout.
 # L'effet de chaque id est lu dans main.gd et player.gd (has_node).
 const TREE := {
-	"nyx": DC.NYX_TREE, "brack": DC.BRACK_TREE,
+	"nyx": DC.NYX_TREE, "brack": DC.BRACK_TREE, "iris": DC.IRIS_TREE,
 	"kade": [
 		{ "id": "w", "name": "Armes", "dir": Vector2(0, -1), "trunk": [
 			{ "id": "w_t1", "name": "Main lourde", "desc": "Un kill à bout portant recharge l'arme" },
@@ -243,6 +253,29 @@ const WEAPONS := {
 		"blurb": "Lance-mines collantes. Elles collent aux murs et aux ennemis ; clic droit pour tout faire sauter.",
 		"stats": [["Dégâts", "Énormes"], ["Mines", "4"], ["Clic droit", "Boum"]],
 	},
+	# Iris : rail (garde le tir pour charger, traverse les ennemis alignés), drone (drone-tourelle posé à la
+	# visée, clic droit pour le rappeler). Patch marque les ennemis touchés.
+	"aiguille": {
+		"id": "aiguille", "name": "Aiguille", "model": "rail", "mode": "rail",
+		"mag": 5, "rate": 0.3, "dmg": 60.0, "pellets": 1, "spread": 0.0, "reload": 1.5, "kick": 0.05,
+		"sound": "revolver", "color": Color("c77dff"), "unique": true,
+		"blurb": "Fusil à rail. Garde le tir enfoncé pour charger : le rail traverse tous les ennemis alignés.",
+		"stats": [["Dégâts", "×3 chargé"], ["Charge", "0,8 s"], ["Traverse", "Tout"]],
+	},
+	"mouche": {
+		"id": "mouche", "name": "Mouche", "model": "dronegun", "mode": "drone", "alt": "Rappeler",
+		"mag": 1, "rate": 0.35, "dmg": 11.0, "pellets": 1, "spread": 0.0, "reload": 0.0, "kick": 0.02,
+		"sound": "click", "color": Color("c77dff"), "unique": true,
+		"blurb": "Envoie un drone-tourelle là où tu vises. Il tire seul ; clic droit pour le rappeler.",
+		"stats": [["Drone", "1"], ["Tir", "Auto"], ["Clic droit", "Rappel"]],
+	},
+	"patch": {
+		"id": "patch", "name": "Patch", "model": "virus",
+		"mag": 14, "rate": 0.2, "dmg": 18.0, "pellets": 1, "spread": 0.008, "reload": 1.0, "kick": 0.015,
+		"sound": "pistol", "color": Color("c77dff"), "unique": true,
+		"blurb": "Pistolet virus. Les ennemis touchés sont marqués ; à leur mort, le marquage passe au voisin.",
+		"stats": [["Dégâts", "Moyens"], ["Marque", "5 s"], ["Propagation", "Oui"]],
+	},
 	"rifle": {
 		"id": "rifle", "name": "Fusil d'assaut", "model": "rifle", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,
 		"spread": 0.012, "reload": 1.0, "kick": 0.012, "sound": "rifle", "color": Color("3fd0c9"),
@@ -362,6 +395,40 @@ const HEALS := [
 ]
 const AUG_PRICE := 110
 const UPGRADE_PRICE := 140
+
+# Mods d'armes : un augment change un chiffre, un mod change un comportement. 3 emplacements par arme
+# (Munition, Mécanisme, Déclencheur), un mod par emplacement, achetés au shop. hitscan : seulement pour
+# les armes à balles ; weapon : mod propre à une arme unique. Effets dans main.gd (_mod_hit...) et player.gd.
+const MOD_SLOTS := { "ammo": "Munition", "mech": "Mécanisme", "trig": "Déclencheur" }
+const MOD_PRICE := 150
+const MODS := [
+	{ "id": "m_fire", "slot": "ammo", "name": "Incendiaire", "desc": "Les impacts enflamment l'ennemi et laissent des flammes au sol" },
+	{ "id": "m_arc", "slot": "ammo", "name": "Arc", "desc": "À chaque impact, l'électricité saute sur 2 ennemis proches" },
+	{ "id": "m_cryo", "slot": "ammo", "name": "Cryo", "desc": "Les impacts ralentissent ; au 3e impact rapproché, l'ennemi gèle 1,5 s" },
+	{ "id": "m_frag", "slot": "ammo", "name": "Fragmentation", "desc": "Un kill à l'arme provoque une petite explosion" },
+	{ "id": "m_burst", "slot": "mech", "name": "Rafale", "desc": "L'arme tire par rafales de 3 balles", "hitscan": true },
+	{ "id": "m_charge", "slot": "mech", "name": "Charge", "desc": "Garde le tir enfoncé pour charger : le coup part au relâchement, jusqu'à ×3", "hitscan": true },
+	{ "id": "m_bounce", "slot": "mech", "name": "Rebond", "desc": "Les balles ricochent une fois sur les murs", "hitscan": true },
+	{ "id": "m_fan", "slot": "mech", "name": "Éventail", "desc": "Chaque tir part en éventail : 2 balles de plus sur les côtés", "hitscan": true },
+	{ "id": "m_chain", "slot": "mech", "name": "Chaîne", "desc": "Clic droit tire l'ennemi harponné vers toi au lieu de te tracter", "weapon": "harpon" },
+	{ "id": "m_shock", "slot": "trig", "name": "Recharge choc", "desc": "Recharger crée une onde qui repousse les ennemis proches" },
+	{ "id": "m_last", "slot": "trig", "name": "Dernière balle", "desc": "La dernière balle du chargeur explose à l'impact", "hitscan": true },
+	{ "id": "m_wall", "slot": "trig", "name": "Mur", "desc": "Les tirs pendant un wall run traversent tous les ennemis", "hitscan": true },
+	{ "id": "m_roll", "slot": "trig", "name": "Roulade", "desc": "Après une roulade, le chargeur suivant est électrique et incendiaire" },
+]
+
+static func mod_ok(m: Dictionary, W: Dictionary) -> bool:
+	# ce mod a-t-il un effet sur cette arme ?
+	if m.has("weapon"):
+		return W.id == m.weapon
+	var mode: String = W.get("mode", "")
+	if m.get("hitscan", false):
+		return mode == ""
+	if m.slot == "ammo" or m.id == "m_roll":
+		return not mode in ["lob", "mine"]
+	if m.id == "m_shock":
+		return W.reload > 0.0 and not mode in ["blade", "drone"]
+	return true
 
 # "weapon" vide = augment commun. L'effet de chaque id est appliqué dans main.gd (apply_augment).
 const AUGMENTS := [

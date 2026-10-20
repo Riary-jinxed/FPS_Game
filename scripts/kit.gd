@@ -139,6 +139,22 @@ func speed_mult() -> float:
 func extra_jumps() -> int:
 	return 0
 
+func decoy_pos():
+	# position d'un leurre que les tireurs visent à la place du joueur (null : pas de leurre)
+	return null
+
+func blocks_shot() -> bool:
+	# true : le projectile ennemi qui touche le joueur est sans effet
+	return false
+
+func reflect_shot(_s) -> bool:
+	# true : le projectile ennemi est renvoyé (il blesse alors les ennemis)
+	return false
+
+func on_shot_near(_s, _dist: float) -> void:
+	# chaque image, pour chaque projectile ennemi en vol
+	pass
+
 func hidden_from(_dist: float) -> bool:
 	# true : les tireurs à cette distance ne voient pas le joueur
 	return false

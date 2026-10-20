@@ -38,6 +38,11 @@ var roll_grace := 0.0
 var slide_t := 0.0
 var bolide := false        # glissade lancée juste après une roulade (arbre : Bolide)
 var hit_count := 0         # balles qui ont touché (arbre : Dixième balle)
+var burst_left := 0        # mod Rafale : balles restantes de la rafale
+var burst_t := 0.0
+var in_burst := false
+var mod_charge := 0.0      # mod Charge
+var charge_mul := 1.0
 var recoil_t := 0.0        # propulsé par le recul du Brise-porte (arbre : Recul blessant)
 var slide_cd := 0.0
 var air := false
@@ -288,6 +293,43 @@ func _build_guns() -> void:
 				mag = _box(g, Vector3(0.09, 0.03, 0.09), _mat(Color("ff8a3d"), true), Vector3(0, 0.0, -0.27)) # mine
 				_box(mag, Vector3(0.02, 0.02, 0.02), hot, Vector3(0, 0.02, 0))
 				muzzle_z = -0.3
+			"rail":
+				# Aiguille : fusil à rail, deux rails parallèles, bobine qui gonfle pendant la charge
+				_box(g, Vector3(0.07, 0.09, 0.3), body, Vector3(0, -0.01, 0.08))
+				for x in [-0.03, 0.03]:
+					_box(g, Vector3(0.016, 0.03, 0.56), dark, Vector3(x, 0.02, -0.3))
+					_box(g, Vector3(0.006, 0.012, 0.5), trim, Vector3(x, 0.04, -0.3))
+				extra = _box(g, Vector3(0.09, 0.09, 0.08), trim, Vector3(0, 0.02, -0.12)) # bobine
+				_box(g, Vector3(0.012, 0.012, 0.02), hot, Vector3(0, 0.02, -0.59))
+				_box(g, Vector3(0.03, 0.05, 0.14), dark, Vector3(0, 0.08, -0.02)) # lunette
+				var rgp := _box(g, Vector3(0.045, 0.12, 0.05), grip, Vector3(0, -0.09, 0.12))
+				rgp.rotation.x = 0.25
+				_box(g, Vector3(0.06, 0.08, 0.18), body, Vector3(0, -0.02, 0.3))
+				mag = _box(g, Vector3(0.04, 0.08, 0.06), dark, Vector3(0, -0.08, 0.0))
+				_box(mag, Vector3(0.042, 0.02, 0.062), trim, Vector3(0, -0.03, 0))
+				muzzle_z = -0.6
+			"dronegun":
+				# Mouche : gantelet de commande, antenne, un drone replié sur le dos de la main
+				_box(g, Vector3(0.08, 0.06, 0.2), grip, Vector3(0, -0.03, 0.04))
+				_box(g, Vector3(0.085, 0.015, 0.16), trim, Vector3(0, 0.005, 0.04))
+				_box(g, Vector3(0.012, 0.16, 0.012), dark, Vector3(0.03, 0.08, 0.1)) # antenne
+				_box(g, Vector3(0.02, 0.02, 0.02), hot, Vector3(0.03, 0.17, 0.1))
+				mag = _box(g, Vector3(0.16, 0.04, 0.16), _mat(Color("3a3050"), false, 0.4, 0.5), Vector3(0, 0.03, -0.1)) # drone
+				for x in [-0.07, 0.07]:
+					for z in [-0.07, 0.07]:
+						_box(mag, Vector3(0.06, 0.008, 0.06), trim, Vector3(x, 0.025, z))
+				muzzle_z = -0.2
+			"virus":
+				# Patch : pistolet compact, fiole de virus violette sur le dessus
+				_box(g, Vector3(0.05, 0.07, 0.22), body, Vector3(0, 0.02, -0.04))
+				_box(g, Vector3(0.03, 0.03, 0.08), dark, Vector3(0, 0.02, -0.18))
+				_box(g, Vector3(0.008, 0.02, 0.008), hot, Vector3(0, 0.065, -0.13))
+				extra = _box(g, Vector3(0.035, 0.035, 0.1), _mat(Color("c77dff"), true), Vector3(0, 0.075, -0.02)) # fiole
+				var vg := _box(g, Vector3(0.045, 0.13, 0.055), grip, Vector3(0, -0.07, 0.05))
+				vg.rotation.x = 0.25
+				mag = _box(g, Vector3(0.036, 0.06, 0.04), dark, Vector3(0, -0.135, 0.07))
+				_box(mag, Vector3(0.038, 0.02, 0.042), trim, Vector3(0, -0.02, 0))
+				muzzle_z = -0.22
 			"rifle":
 				_box(g, Vector3(0.08, 0.1, 0.5), body)
 				_box(g, Vector3(0.05, 0.02, 0.44), dark, Vector3(0, 0.06, -0.02))
@@ -458,6 +500,8 @@ func jump() -> void:
 func roll() -> void:
 	if roll_cd > 0.0 or roll_t > 0.0:
 		return
+	if game.has_mod("m_roll"):
+		game.roll_elem = W.mag
 	if game.kit.on_roll():
 		roll_cd = game.up.roll_cd
 		return
@@ -494,6 +538,8 @@ func start_reload() -> void:
 		return
 	reload_t = W.reload
 	reload_fx = {}
+	if game.has_mod("m_shock"):
+		game.mod_reload_shock()
 	for G in guns:
 		G.ejected = false
 		G.back = false
@@ -540,7 +586,30 @@ func simulate(it: Dictionary, delta: float) -> void:
 				G.mag.position = G.mag_home
 				if G.extra:
 					G.extra.transform = G.extra_home
-	if it.fire and fire_cd <= 0.0 and reload_t <= 0.0:
+	if burst_left > 0:
+		burst_t -= delta
+		if burst_t <= 0.0:
+			burst_left -= 1
+			burst_t = 0.07
+			if ammo > 0 and reload_t <= 0.0:
+				in_burst = true
+				fire_cd = 0.0
+				shoot()
+				in_burst = false
+			if burst_left == 0 or ammo <= 0:
+				burst_left = 0
+				fire_cd = W.rate * 3.0
+	elif game.has_mod("m_charge") and not W.has("mode"):
+		# mod Charge : on charge tant que le tir est enfoncé, le coup part au relâchement
+		if it.fire and reload_t <= 0.0 and ammo > 0 and fire_cd <= 0.0:
+			mod_charge = minf(1.0, mod_charge + delta / 0.7)
+		elif mod_charge > 0.0:
+			charge_mul = 1.0 + 2.0 * mod_charge
+			mod_charge = 0.0
+			fire_cd = 0.0
+			shoot()
+			charge_mul = 1.0
+	elif it.fire and fire_cd <= 0.0 and reload_t <= 0.0:
 		shoot()
 
 	# mouvement
@@ -895,7 +964,7 @@ func shoot() -> void:
 	var basis := cam.global_transform.basis
 	var muzzle: Vector3 = G.g.to_global(G.muzzle)
 	var last_shot: bool = game.up.last_shots > 0 and ammo < game.up.last_shots
-	var dmg_mul: float = (2.0 if last_shot else 1.0) * game.dmg_bonus() * game.kit.shot_mult()
+	var dmg_mul: float = (2.0 if last_shot else 1.0) * game.dmg_bonus() * game.kit.shot_mult() * charge_mul
 	var ram: bool = slide_t > 0.0 and game.tree.has("w_b4")
 	if ram:
 		dmg_mul *= 1.5
@@ -928,8 +997,17 @@ func shoot() -> void:
 	var space := get_world_3d().direct_space_state
 	var hit_any := false
 	var mags := flying_mags()
-	for i in W.pellets:
+	var end_last := origin
+	var fan: bool = game.has_mod("m_fan")
+	var wall_pierce: bool = game.has_mod("m_wall") and wallrun_t > 0.0
+	var bounce: bool = game.has_mod("m_bounce")
+	for i in W.pellets * (3 if fan else 1):
 		var dir := (basis * Vector3(randf_range(-spread, spread), randf_range(-spread, spread), -1.0)).normalized()
+		var pf := 1.0
+		if fan and i % 3 != 0:
+			# mod Éventail : 2 balles de plus sur les côtés, moins fortes
+			dir = dir.rotated(basis.y, 0.1 if i % 3 == 1 else -0.1)
+			pf = 0.45
 		var end := origin + dir * 60.0
 		var exclude: Array[RID] = [get_rid()]
 		var q := PhysicsRayQueryParameters3D.create(origin, origin + dir * 120.0, 1 | 2, exclude)
@@ -951,16 +1029,18 @@ func shoot() -> void:
 			hit_any = true
 		else:
 			var struck := 0
-			while r and struck <= game.up.pierce:
+			while r and struck <= game.up.pierce + (99 if wall_pierce else 0):
 				var en = r.collider
 				if not (en is CharacterBody3D and en.get("alive") != null):
 					end = r.position
 					game.burst(end, Color("6a7784"), 3, 3.0)
+					if bounce:
+						game.mod_wall_bounce(r.position, dir, r.normal, W.dmg * dmg_mul * pf)
 					break
 				struck += 1
 				end = r.position
 				var head_hit: bool = r.position.y > en.global_position.y + en.T.h * 0.8
-				var dmg: float = W.dmg * dmg_mul * (game.up.crit if head_hit else 1.0)
+				var dmg: float = W.dmg * dmg_mul * pf * (game.up.crit if head_hit else 1.0)
 				var ctx := { "src": "gun", "head": head_hit, "from": origin }
 				if head_hit and game.tree.has("w_v1"):
 					ammo = mini(W.mag, ammo + 1)
@@ -990,9 +1070,15 @@ func shoot() -> void:
 				r = space.intersect_ray(q)
 		if i < 3:
 			game.tracer(muzzle, end, Color("ff5a36") if last_shot else Color("ffd28a"))
+		end_last = end
 	if hit_any:
 		game.hud.hitmark()
 		game.sfx.play("hit")
 	game.kit.on_shot()
+	if game.has_mod("m_last") and ammo == 0 and not surge:
+		game.mod_blast(end_last, 3.5, W.dmg * dmg_mul * 2.5)
+	if game.has_mod("m_burst") and not in_burst and burst_left == 0:
+		burst_left = 2
+		burst_t = 0.07
 	if ammo == 0:
 		start_reload()
