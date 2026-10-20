@@ -246,6 +246,48 @@ func _build_guns() -> void:
 				cg.rotation.x = 0.25
 				mag = _box(g, Vector3(0.03, 0.03, 0.12), dark, Vector3(0, -0.05, -0.1))
 				muzzle_z = -0.4
+			"launcher":
+				# Tambour : lance-grenades à barillet, gros tube, poignée avant
+				_box(g, Vector3(0.09, 0.09, 0.36), body, Vector3(0, 0.0, 0.02))
+				var tube := _box(g, Vector3(0.1, 0.1, 0.34), dark, Vector3(0, 0.03, -0.3))
+				_box(tube, Vector3(0.104, 0.02, 0.3), trim, Vector3(0, 0.05, 0))
+				_box(g, Vector3(0.05, 0.05, 0.012), hot, Vector3(0, 0.03, -0.475))
+				extra = _box(g, Vector3(0.15, 0.15, 0.13), dark, Vector3(0, -0.02, -0.06)) # barillet
+				for k in 3:
+					var fl := _box(extra, Vector3(0.155, 0.03, 0.1), trim, Vector3(0, 0, 0))
+					fl.rotation.z = k * PI / 3.0
+				_box(g, Vector3(0.04, 0.1, 0.05), grip, Vector3(0, -0.1, -0.24))
+				var lg := _box(g, Vector3(0.05, 0.13, 0.06), grip, Vector3(0, -0.09, 0.12))
+				lg.rotation.x = 0.3
+				_box(g, Vector3(0.07, 0.09, 0.16), body, Vector3(0, -0.01, 0.26))
+				mag = _box(g, Vector3(0.06, 0.06, 0.06), _mat(Color("ff8a3d"), false, 0.3, 0.6), Vector3(0, 0.08, 0.0)) # grenade
+				muzzle_z = -0.48
+			"minigun":
+				# Moulin : 6 canons qui tournent, boîtier massif, bande de munitions
+				_box(g, Vector3(0.16, 0.14, 0.26), body, Vector3(0, -0.02, 0.06))
+				_box(g, Vector3(0.166, 0.012, 0.16), trim, Vector3(0, 0.03, 0.06))
+				extra = _box(g, Vector3(0.001, 0.001, 0.001), body, Vector3(0, 0.0, -0.2)) # pivot des canons
+				for k in 6:
+					var a := k * TAU / 6.0
+					_box(extra, Vector3(0.026, 0.026, 0.44), dark, Vector3(cos(a) * 0.045, sin(a) * 0.045, -0.1))
+				_box(extra, Vector3(0.12, 0.12, 0.03), trim, Vector3(0, 0, -0.28))
+				_box(extra, Vector3(0.12, 0.12, 0.03), dark, Vector3(0, 0, 0.0))
+				_box(g, Vector3(0.04, 0.04, 0.01), hot, Vector3(0, 0, -0.52))
+				_box(g, Vector3(0.05, 0.12, 0.06), grip, Vector3(0, -0.14, 0.12))
+				_box(g, Vector3(0.14, 0.03, 0.03), grip, Vector3(0, 0.1, 0.0)) # poignée de transport
+				mag = _box(g, Vector3(0.1, 0.12, 0.14), _mat(Color("d9a441"), false, 0.8, 0.35), Vector3(0.11, -0.06, 0.08)) # caisse de balles
+				muzzle_z = -0.52
+			"mines":
+				# Glu : lanceur trapu, mine collante visible à la bouche, réservoir de colle
+				_box(g, Vector3(0.09, 0.09, 0.3), body, Vector3(0, 0, -0.04))
+				_box(g, Vector3(0.12, 0.12, 0.06), dark, Vector3(0, 0.0, -0.22))
+				_box(g, Vector3(0.124, 0.02, 0.064), trim, Vector3(0, 0.05, -0.22))
+				extra = _box(g, Vector3(0.045, 0.06, 0.08), _mat(Color("9cff5e"), true), Vector3(0.0, 0.075, 0.04)) # réservoir
+				var mg := _box(g, Vector3(0.05, 0.13, 0.06), grip, Vector3(0, -0.09, 0.08))
+				mg.rotation.x = 0.3
+				mag = _box(g, Vector3(0.09, 0.03, 0.09), _mat(Color("ff8a3d"), true), Vector3(0, 0.0, -0.27)) # mine
+				_box(mag, Vector3(0.02, 0.02, 0.02), hot, Vector3(0, 0.02, 0))
+				muzzle_z = -0.3
 			"rifle":
 				_box(g, Vector3(0.08, 0.1, 0.5), body)
 				_box(g, Vector3(0.05, 0.02, 0.44), dark, Vector3(0, 0.06, -0.02))
@@ -503,7 +545,9 @@ func simulate(it: Dictionary, delta: float) -> void:
 
 	# mouvement
 	var wish := move_input()
-	if roll_t > 0.0:
+	if game.kit.move_override(delta):
+		pass
+	elif roll_t > 0.0:
 		roll_t -= delta
 		if roll_t <= 0.0:
 			roll_grace = 0.6

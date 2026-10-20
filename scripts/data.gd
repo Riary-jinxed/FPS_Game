@@ -33,8 +33,18 @@ const CHARACTERS := {
 		"grenade": { "name": "Tremplin", "desc": "Étourdit à l'impact et laisse au sol un tremplin qui propulse très haut.",
 			"cd": 15.0, "dmg": 40.0, "radius": 4.5, "color": "5effc8" },
 	},
+	"brack": {
+		"id": "brack", "name": "Brack", "title": "le Démolisseur",
+		"blurb": "Ex-démolisseur de chantier. Lent, increvable, et tout ce qu'il touche finit en cratère.",
+		"skill": "Frappe orbitale", "skill_desc": "Marque une zone à la visée : elle est écrasée par une frappe 1,5 s plus tard.",
+		"weapons": ["tambour", "moulin", "glu"],
+		"skill_time": 4.0, "hp": 140.0, "speed": 0.9, "kit": "res://scripts/kits/brack.gd", "color": Color("ff8a3d"),
+		"unlock": "Succès Démolition : 15 ennemis tués par une seule explosion, ou 500 kills par explosion",
+		"grenade": { "name": "Grappe", "desc": "Grosse charge qui se divise en 4 petites bombes à l'impact.",
+			"cd": 15.0, "dmg": 50.0, "radius": 3.5, "color": "ffa13d" },
+	},
 }
-const CHARACTER_ORDER := ["kade", "nyx"]
+const CHARACTER_ORDER := ["kade", "nyx", "brack"]
 
 # ---------- Maîtrise (méta-progression par perso) ----------
 # La maîtrise monte avec l'XP gagnée en jouant le perso. Le perso commence avec sa 1re arme unique,
@@ -54,7 +64,7 @@ static func mastery_level(mxp: int) -> int:
 # On avance depuis le centre ; un run complet donne environ 22 points, on ne remplit jamais tout.
 # L'effet de chaque id est lu dans main.gd et player.gd (has_node).
 const TREE := {
-	"nyx": DC.NYX_TREE,
+	"nyx": DC.NYX_TREE, "brack": DC.BRACK_TREE,
 	"kade": [
 		{ "id": "w", "name": "Armes", "dir": Vector2(0, -1), "trunk": [
 			{ "id": "w_t1", "name": "Main lourde", "desc": "Un kill à bout portant recharge l'arme" },
@@ -209,6 +219,29 @@ const WEAPONS := {
 		"sound": "revolver", "color": Color("5effc8"), "unique": true,
 		"blurb": "Arbalète. Le carreau s'accroche ; clic droit pour te tracter vers la cible ou le mur.",
 		"stats": [["Dégâts", "Lourds"], ["Carreau", "1"], ["Clic droit", "Grappin"]],
+	},
+	# Brack : lob (grenade à rebond), spin (minigun qui monte en cadence), mine (mines collantes, clic droit
+	# pour les faire sauter). blast : rayon de l'explosion.
+	"tambour": {
+		"id": "tambour", "name": "Tambour", "model": "launcher", "mode": "lob", "blast": 3.6,
+		"mag": 6, "rate": 0.5, "dmg": 70.0, "pellets": 1, "spread": 0.0, "reload": 1.6, "kick": 0.06,
+		"sound": "shotgun", "color": Color("ff8a3d"), "unique": true,
+		"blurb": "Lance-grenades à rebond, 6 coups. La grenade explose au contact d'un ennemi.",
+		"stats": [["Dégâts", "Zone"], ["Coups", "6"], ["Rebonds", "Oui"]],
+	},
+	"moulin": {
+		"id": "moulin", "name": "Moulin", "model": "minigun", "spin": true,
+		"mag": 150, "rate": 0.12, "dmg": 12.0, "pellets": 1, "spread": 0.045, "reload": 2.2, "kick": 0.004,
+		"sound": "uzi", "color": Color("ff8a3d"), "unique": true,
+		"blurb": "Minigun. La cadence monte tant que tu tires, mais il ralentit Brack.",
+		"stats": [["Cadence", "Monte"], ["Balles", "150"], ["Au tir", "Lent"]],
+	},
+	"glu": {
+		"id": "glu", "name": "Glu", "model": "mines", "mode": "mine", "alt": "Faire sauter", "blast": 4.2,
+		"mag": 4, "rate": 0.3, "dmg": 95.0, "pellets": 1, "spread": 0.0, "reload": 1.4, "kick": 0.03,
+		"sound": "click", "color": Color("ff8a3d"), "unique": true,
+		"blurb": "Lance-mines collantes. Elles collent aux murs et aux ennemis ; clic droit pour tout faire sauter.",
+		"stats": [["Dégâts", "Énormes"], ["Mines", "4"], ["Clic droit", "Boum"]],
 	},
 	"rifle": {
 		"id": "rifle", "name": "Fusil d'assaut", "model": "rifle", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,

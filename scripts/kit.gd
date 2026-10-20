@@ -109,6 +109,10 @@ func on_wall_jump() -> void:
 func on_land(_fall_speed: float) -> void:
 	pass
 
+func move_override(_delta: float) -> bool:
+	# true : le kit pilote le mouvement ce pas-ci (charge d'épaule...)
+	return false
+
 func on_roll() -> bool:
 	# true : le kit remplace la roulade
 	return false

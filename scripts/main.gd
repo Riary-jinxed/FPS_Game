@@ -2189,7 +2189,7 @@ func _chars_only() -> void:
 		to_menu()
 		await _wait(0.5)
 		await _shot("menu_persos")
-		for w in Data.CHARACTERS.nyx.weapons:
+		for w in Data.CHARACTERS.nyx.weapons + Data.CHARACTERS.brack.weapons:
 			start_with(w)
 			_clear_round()
 			player.global_position = Vector3(-30, 0.1, 10)
@@ -2199,8 +2199,153 @@ func _chars_only() -> void:
 	start_with("jumeaux")
 	await _wait(1.0)
 	await _nyx_test()
+	await _brack_test()
 	print("AUTOTEST done")
 	get_tree().quit()
+
+func _brack_setup(w: String) -> void:
+	start_with(w)
+	await _wait(0.5)
+	player.hp = 1e9; up.max_hp = 1e9
+	_clear_round(); intermission = 999.0
+	_target("brute", Vector3(-34, 0.05, -34))   # témoin : le round ne se termine pas
+	player.forced_intent = { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	enemy_slow = 0.0
+	player.global_position = Vector3(0, 0.1, 16)
+	player.velocity = Vector3.ZERO
+
+func _brack_test() -> void:
+	# Brack : Tambour, Moulin, Glu, Frappe orbitale, Grappe, charge d'épaule, succès Démolition
+	pick_zone(0)
+	await _brack_setup("tambour")
+	print("[brack] char=%s kit=%s hp=%.0f weapon=%s" % [character, kit.get_script().resource_path.get_file(), Data.CHARACTERS.brack.hp, player.W.name])
+	var b1 = _target("brute", Vector3(0, 0.05, 6))
+	await _wait(0.2)
+	_aim_at(b1.center())
+	var hp0: float = b1.hp
+	player.fire_cd = 0.0
+	player.shoot()
+	await _wait(1.2)
+	print("[brack] tambour dmg=%.0f ammo=%d bombs=%d" % [hp0 - b1.hp, player.ammo, kit.bombs.size()])
+	# blessure par ses propres explosions, puis Démineur
+	player.hp = 100.0
+	kit._explode(player.global_position + Vector3(0, 0.9, 0), 3.0, 50.0)
+	var self_hit: float = 100.0 - player.hp
+	state = "between"; screen = "tree"; points = 8
+	for id in ["br_wt1", "br_wt2", "br_t1", "br_mt1", "br_mt2", "br_ms1"]:
+		pick_tree(id)
+	state = "play"; screen = ""
+	player.hp = 100.0
+	var vy0: float = player.velocity.y
+	kit._explode(player.global_position + Vector3(0, 0.4, 0), 3.0, 50.0)
+	print("[brack] self dmg=%.0f then %.0f rocket vy=%.1f mag=%d tree=%s" % [self_hit, 100.0 - player.hp, player.velocity.y - vy0, player.W.mag, str(tree.keys())])
+	player.hp = 1e9
+	await _wait(1.5)
+	# charge d'épaule
+	_clear_round()
+	_target("brute", Vector3(-34, 0.05, -34))
+	player.global_position = Vector3(0, 0.1, 16)
+	player.velocity = Vector3.ZERO
+	var g1 = _target("grunt", Vector3(0, 0.05, 11))
+	await _wait(0.3)
+	_aim_at(Vector3(0, 1.0, 0))
+	var z0: float = player.global_position.z
+	hp0 = g1.hp
+	player.roll_cd = 0.0
+	player.roll()
+	await _wait(0.6)
+	print("[brack] charge moved=%.1f grunt dmg=%.0f done=%s" % [z0 - player.global_position.z, hp0 - g1.hp if is_instance_valid(g1) and g1.alive else hp0, kit.charge_t <= 0.0])
+	# Moulin : la cadence monte et Brack ralentit
+	await _brack_setup("moulin")
+	var b2 = _target("brute", Vector3(0, 0.05, -10))
+	await _wait(0.2)
+	_aim_at(b2.center())
+	var a0: int = player.ammo
+	var fire_it: Dictionary = player.forced_intent.duplicate()
+	fire_it.fire = true
+	player.forced_intent = fire_it
+	await _wait(0.6)
+	var early: int = a0 - player.ammo
+	await _wait(1.0)
+	var late: int = a0 - player.ammo - early
+	print("[brack] moulin spin=%.2f shots first 0.6s=%d next 1.0s=%d speed=%.2f" % [kit.spin, early, late, kit.speed_mult()])
+	player.forced_intent.fire = false
+	# Glu : mines collées sur un ennemi et au sol, puis détonation
+	await _brack_setup("glu")
+	var b3 = _target("brute", Vector3(0, 0.05, 8))
+	await _wait(0.2)
+	_aim_at(b3.center())
+	for k in 2:
+		player.fire_cd = 0.0
+		player.shoot()
+	_aim_at(Vector3(3, 0, 10))
+	player.fire_cd = 0.0
+	player.shoot()
+	await _wait(0.8)
+	var stuck: int = kit.bombs.filter(func(b): return b.kind == "mine" and b.stuck).size()
+	var on_en: int = kit.bombs.filter(func(b): return b.kind == "mine" and b.en == b3).size()
+	hp0 = b3.hp
+	kit.alt_fire()
+	await _wait(0.1)
+	print("[brack] glu mines stuck=%d on_enemy=%d dmg=%.0f left=%d" % [stuck, on_en, hp0 - b3.hp if is_instance_valid(b3) and b3.alive else hp0, kit.bombs.size()])
+	# Frappe orbitale sur un groupe
+	await _brack_setup("tambour")
+	var group := []
+	for k in 5:
+		group.append(_target("grunt", Vector3(cos(k * 1.2) * 2.5, 0.05, sin(k * 1.2) * 2.5)))
+	await _wait(0.2)
+	_aim_at(Vector3(0.3, 0, 0.3))
+	player.skill = 100.0
+	activate_skill()
+	var pending: int = kit.strikes.size()
+	await _wait(1.0)
+	var alive_mid: int = group.filter(func(e): return is_instance_valid(e) and e.alive).size()
+	await _wait(0.8)
+	var alive_end: int = group.filter(func(e): return is_instance_valid(e) and e.alive).size()
+	print("[brack] frappe pending=%d alive at 1.0s=%d after=%d" % [pending, alive_mid, alive_end])
+	tree["br_ss4"] = true
+	player.skill = 100.0
+	activate_skill()
+	var carpet: int = kit.strikes.size()
+	tree.erase("br_ss4")
+	await _wait(2.5)
+	tree["br_sp4"] = true
+	player.skill = 100.0
+	activate_skill()
+	print("[brack] tapis strikes=%d rayon active=%.1f" % [carpet, kit.active])
+	await _wait(4.2)
+	tree.erase("br_sp4")
+	# Grappe : grosse charge et petites bombes
+	await _brack_setup("tambour")
+	var b4 = _target("brute", Vector3(0, 0.05, 8))
+	await _wait(0.2)
+	_aim_at(b4.center())
+	hp0 = b4.hp
+	gren_charges = 1
+	throw_grenade()
+	await _wait(0.5)
+	var lets: int = kit.bombs.filter(func(b): return b.kind == "bomblet").size()
+	await _wait(1.0)
+	print("[brack] grappe bomblets=%d dmg=%.0f" % [lets, hp0 - b4.hp if is_instance_valid(b4) and b4.alive else hp0])
+	# succès Démolition : 15 ennemis d'une seule explosion débloquent Brack
+	unlocked.erase("brack")
+	_clear_round()
+	_target("brute", Vector3(-34, 0.05, -34))
+	for k in 15:
+		_target("grunt", Vector3(cos(k * 0.42) * 2.0, 0.05, -20.0 + sin(k * 0.42) * 2.0))
+	await _wait(0.1)
+	kit._explode(Vector3(0, 1.0, -20.0), 4.0, 99999.0, { "self_safe": true })
+	print("[brack] demolition unlocked=%s" % ["brack" in unlocked])
+	state = "between"; screen = "tree"; points = 3
+	if OS.get_environment("HB_SHOTS") != "":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		open_tree()
+		await _wait(0.3)
+		await _shot("brack_tree")
+	state = "play"; screen = ""
+	enemy_slow = 1.0
+	player.forced_intent = {}
+	_clear_round()
 
 func _nyx_test() -> void:
 	# Nyx : Overdrive, Tremplin, Crocs, Harpon et quelques nœuds de l'arbre
@@ -2527,5 +2672,6 @@ func _autotest() -> void:
 		await _wait(0.3)
 	await _shot("over")
 	await _nyx_test()
+	await _brack_test()
 	print("AUTOTEST done")
 	get_tree().quit()

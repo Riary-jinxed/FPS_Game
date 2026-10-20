@@ -409,7 +409,7 @@ func banner(title: String, sub := "") -> void:
 	lbl.banner_box.modulate.a = 1.0
 	banner_t = 2.2
 
-func add_feed(text: String, big: bool) -> void:
+func add_feed(text: String, big := false) -> void:
 	var l := _right(_label(text, 16 if big else 14, HOT if big else WARN, true))
 	feed.add_child(l)
 	feed.move_child(l, 0)
