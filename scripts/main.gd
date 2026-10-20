@@ -9,8 +9,9 @@ const ThrownMag = preload("res://scripts/thrown_mag.gd")
 const HudScript = preload("res://scripts/hud.gd")
 const MusicScript = preload("res://scripts/music.gd")
 const SfxScript = preload("res://scripts/sfx.gd")
+const KitBase = preload("res://scripts/kit.gd")
 const ARENAS := { "city": preload("res://scripts/city.gd"), "foundry": preload("res://scripts/foundry.gd") }
-const SAVE := "user://save.cfg"
+var SAVE := "user://save.cfg"   # les tests utilisent leur propre fichier
 
 var state := "menu" # menu, play, between, paused, over, victory
 var player
@@ -33,9 +34,21 @@ var kills := 0
 var taken := {}
 var up := {}
 var character := "kade"
+var kit                     # kit du perso joué (compétence, grenade, armes spéciales, arbre)
 var chosen := "jumeaux"
 var best := 0
 var best_wave := 0
+# méta-progression (sauvegardée entre les runs)
+var unlocked := ["kade"]     # persos débloqués
+var mastery := {}            # XP de maîtrise par perso
+var datas := 0               # Données : monnaie gardée entre les runs
+var boom_kills := 0          # kills par explosion au total (succès Démolition)
+var unlock_all := false      # mode test : tout est débloqué
+var run_xp := 0
+var meta_msg := ""
+var run_bosses := 0
+var _boom_frame := -1
+var _boom_n := 0
 var pickups: Array = []
 var bonus_t := 12.0
 var gren_charges := 1           # grenades prêtes
@@ -107,6 +120,7 @@ func _ready() -> void:
 	add_child(player)
 	up = Data.BASE_UP.duplicate()
 	player.reset(Data.WEAPONS[chosen])
+	_make_kit()
 	hud = HudScript.new(); add_child(hud)
 	hud.weapon_picked.connect(start_with)
 	hud.augment_picked.connect(pick_augment)
@@ -117,6 +131,11 @@ func _ready() -> void:
 	hud.retry_pressed.connect(func(): start_with(chosen))
 	hud.menu_pressed.connect(to_menu)
 	hud.zone_picked.connect(pick_zone)
+	hud.char_picked.connect(pick_character)
+	if "--autotest" in OS.get_cmdline_user_args() or "--showcase" in OS.get_cmdline_user_args() or "--routes" in OS.get_cmdline_user_args() or "--chars" in OS.get_cmdline_user_args():
+		SAVE = "user://save_test.cfg"
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
+	hud.unlock_all_toggled.connect(toggle_unlock_all)
 	_load_save()
 	to_menu()
 	for a in OS.get_cmdline_user_args():
@@ -128,6 +147,8 @@ func _ready() -> void:
 		_showcase()
 	elif "--routes" in OS.get_cmdline_user_args():
 		_routes_only()
+	elif "--chars" in OS.get_cmdline_user_args():
+		_chars_only()
 
 func _setup_input() -> void:
 	var add := func(action: String, keys: Array, mouse: int, buttons: Array, axes: Array):
@@ -150,7 +171,9 @@ func _setup_input() -> void:
 	add.call("roll", [KEY_SHIFT], -1, [JOY_BUTTON_LEFT_SHOULDER], [])
 	add.call("slide", [KEY_C, KEY_CTRL], -1, [JOY_BUTTON_B], [])
 	add.call("reload", [KEY_R], -1, [JOY_BUTTON_X], [])
-	add.call("skill", [KEY_E, KEY_F], MOUSE_BUTTON_RIGHT, [JOY_BUTTON_Y], [])
+	add.call("skill", [KEY_E, KEY_F], -1, [JOY_BUTTON_Y], [])
+	# clic droit : tir secondaire de l'arme quand elle en a un (Harpon, Glu, Mouche), sinon la compétence
+	add.call("alt", [], MOUSE_BUTTON_RIGHT, [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]])
 	add.call("fire", [], MOUSE_BUTTON_LEFT, [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]])
 	add.call("grenade", [KEY_G], MOUSE_BUTTON_MIDDLE, [JOY_BUTTON_RIGHT_SHOULDER], [])
 	add.call("pause", [KEY_ESCAPE, KEY_P], -1, [JOY_BUTTON_START], [])
@@ -247,9 +270,19 @@ func _load_save() -> void:
 	if cfg.load(SAVE) == OK:
 		best = cfg.get_value("game", "best", 0)
 		best_wave = cfg.get_value("game", "best_wave", 0)
+		unlocked = cfg.get_value("meta", "unlocked", ["kade"])
+		mastery = cfg.get_value("meta", "mastery", {})
+		datas = cfg.get_value("meta", "datas", 0)
+		boom_kills = cfg.get_value("meta", "boom_kills", 0)
+		unlock_all = cfg.get_value("meta", "unlock_all", false)
+		var ch: String = cfg.get_value("game", "character", "kade")
+		if Data.CHARACTERS.has(ch) and char_open(ch):
+			character = ch
 		var c: String = cfg.get_value("game", "weapon", "jumeaux")
-		if c in Data.CHARACTERS[character].weapons:
+		if c in Data.CHARACTERS[character].weapons and weapon_open(c):
 			chosen = c
+		else:
+			chosen = Data.CHARACTERS[character].weapons[0]
 		start_zone = clampi(cfg.get_value("game", "zone", 0), 0, Data.ZONES.size() - 1)
 		zone_idx = start_zone
 		_load_arena()
@@ -259,8 +292,111 @@ func _save() -> void:
 	cfg.set_value("game", "best", best)
 	cfg.set_value("game", "best_wave", best_wave)
 	cfg.set_value("game", "weapon", chosen)
+	cfg.set_value("game", "character", character)
+	cfg.set_value("meta", "unlocked", unlocked)
+	cfg.set_value("meta", "mastery", mastery)
+	cfg.set_value("meta", "datas", datas)
+	cfg.set_value("meta", "boom_kills", boom_kills)
+	cfg.set_value("meta", "unlock_all", unlock_all)
 	cfg.set_value("game", "zone", start_zone)
 	cfg.save(SAVE)
+
+func _make_kit() -> void:
+	if kit:
+		kit.queue_free()
+	var path: String = Data.CHARACTERS[character].kit
+	kit = (load(path) if path != "" else KitBase).new()
+	kit.game = self
+	kit.p = player
+	add_child(kit)
+
+# ---------- Méta-progression : persos, maîtrise, Données ----------
+func char_open(id: String) -> bool:
+	return unlock_all or id in unlocked
+
+func mastery_of(id: String) -> int:
+	return Data.mastery_level(mastery.get(id, 0))
+
+func weapon_open(wid: String) -> bool:
+	for cid in Data.CHARACTERS:
+		var list: Array = Data.CHARACTERS[cid].weapons
+		var i := list.find(wid)
+		if i >= 0:
+			return unlock_all or mastery_of(cid) >= Data.WEAPON_MASTERY[i]
+	return true
+
+func unlock_char(id: String, why: String) -> void:
+	if id in unlocked or not Data.CHARACTERS.has(id):
+		return
+	unlocked.append(id)
+	_save()
+	hud.banner(Data.CHARACTERS[id].name + " débloquée" if id != "brack" else "Brack débloqué", why)
+	sfx.play("level")
+
+func pick_character(id: String) -> void:
+	if state != "menu":
+		return
+	if not char_open(id):
+		if id == "iris" and datas >= Data.IRIS_PRICE:
+			datas -= Data.IRIS_PRICE
+			unlock_char("iris", "Palier du Terminal acheté")
+		else:
+			sfx.play("deny")
+			return
+	character = id
+	chosen = Data.CHARACTERS[id].weapons[0]
+	_save()
+	to_menu()
+
+func toggle_unlock_all() -> void:
+	unlock_all = not unlock_all
+	if not char_open(character):
+		character = "kade"
+	if not weapon_open(chosen) or not chosen in Data.CHARACTERS[character].weapons:
+		chosen = Data.CHARACTERS[character].weapons[0]
+	_save()
+	to_menu()
+
+func _menu_chars() -> Array:
+	var out := []
+	for id in Data.CHARACTER_ORDER:
+		var C: Dictionary = Data.CHARACTERS[id]
+		var lock := ""
+		if not char_open(id):
+			lock = C.unlock
+			if id == "iris":
+				lock += " · %d / %d Données" % [datas, Data.IRIS_PRICE]
+		out.append({ "id": id, "name": C.name, "title": C.title, "skill": C.skill, "lock": lock, "mastery": mastery_of(id) })
+	return out
+
+func _menu_weapons() -> Array:
+	var out := []
+	var list: Array = Data.CHARACTERS[character].weapons
+	for i in list.size():
+		var w: Dictionary = Data.WEAPONS[list[i]]
+		out.append({ "id": w.id, "w": w, "lock": "" if weapon_open(w.id) else "Maîtrise %d" % Data.WEAPON_MASTERY[i] })
+	return out
+
+func _meta_text() -> String:
+	return "Maîtrise de %s : niveau %d · Données : %d" % [Data.CHARACTERS[character].name, mastery_of(character), datas]
+
+func _end_run_meta() -> String:
+	# maîtrise du perso, Données gagnées, déblocages
+	var before := mastery_of(character)
+	mastery[character] = mastery.get(character, 0) + run_xp
+	var gain := score / 100 + 40 * run_bosses
+	datas += gain
+	var msg := "+%d Données" % gain
+	var after := mastery_of(character)
+	if after > before:
+		msg += " · maîtrise de %s niveau %d" % [Data.CHARACTERS[character].name, after]
+		var list: Array = Data.CHARACTERS[character].weapons
+		for i in list.size():
+			if before < Data.WEAPON_MASTERY[i] and after >= Data.WEAPON_MASTERY[i]:
+				msg += " · %s débloquée" % Data.WEAPONS[list[i]].name
+	run_xp = 0
+	run_bosses = 0
+	return msg
 
 func zone() -> Dictionary:
 	return Data.ZONES[zone_idx]
@@ -271,10 +407,18 @@ func to_menu() -> void:
 	_set_slow(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	menu_cam.current = true
-	hud.show_menu(Data.CHARACTERS[character], Data.WEAPONS, chosen, best, best_wave, Data.ZONES, start_zone)
+	hud.show_menu(Data.CHARACTERS[character], _menu_chars(), _menu_weapons(), chosen, best, best_wave, Data.ZONES, start_zone, _meta_text(), unlock_all)
 	music.play("menu")
 
 func start_with(id: String) -> void:
+	if not weapon_open(id):
+		sfx.play("deny")
+		return
+	if not id in Data.CHARACTERS[character].weapons:
+		# arme d'un autre perso (test auto, vitrine) : on prend son perso
+		for cid in Data.CHARACTERS:
+			if id in Data.CHARACTERS[cid].weapons:
+				character = cid
 	chosen = id
 	_save()
 	reset_game()
@@ -298,10 +442,16 @@ func reset_game() -> void:
 	between = []
 	weapon_level = 1
 	credits = 0; xp = 0; level = 1; points = 0
+	run_xp = 0; run_bosses = 0
 	skill_t = 0.0
 	_set_slow(false)
 	glitch_t = 0.0
 	player.reset(Data.WEAPONS[chosen])
+	_make_kit()
+	var CH: Dictionary = Data.CHARACTERS[character]
+	up.max_hp = CH.hp
+	up.speed = CH.speed
+	player.hp = up.max_hp
 	wave = 0; cleared = 0; score = 0; kills = 0; to_spawn = []; intermission = 1.5
 	style = 0.0; chain = 0; best_rank = 0; recent_kills = []
 	zone_idx = start_zone
@@ -329,6 +479,7 @@ func resume() -> void:
 	begin()
 
 func _end_run() -> void:
+	meta_msg = _end_run_meta()
 	player.hp = maxf(player.hp, 0.0)
 	_set_slow(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -342,13 +493,13 @@ func game_over() -> void:
 	player.hp = 0.0
 	music.play("over")
 	_end_run()
-	hud.show_over(wave, kills, Data.RANKS[best_rank][0], score, level)
+	hud.show_over(wave, kills, Data.RANKS[best_rank][0], score, level, meta_msg)
 
 func victory() -> void:
 	state = "victory"
 	music.play("victory")
 	_end_run()
-	hud.show_victory(zone().name, kills, Data.RANKS[best_rank][0], score, level, credits)
+	hud.show_victory(zone().name, kills, Data.RANKS[best_rank][0], score, level, credits, meta_msg)
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("mute"):
@@ -360,8 +511,8 @@ func _input(event: InputEvent) -> void:
 			resume()
 	for i in 6:
 		if event.is_action_pressed("pick_%d" % (i + 1)):
-			if state == "menu" and i < Data.WEAPON_ORDER.size():
-				start_with(Data.WEAPON_ORDER[i])
+			if state == "menu" and i < Data.CHARACTERS[character].weapons.size():
+				start_with(Data.CHARACTERS[character].weapons[i])
 			elif state == "between" and screen == "augment":
 				pick_augment(i)
 			elif state == "between" and screen == "shop":
@@ -598,6 +749,7 @@ func _process(delta: float) -> void:
 		skill_t -= delta
 		if skill_t <= 0.0:
 			_end_surge()
+	kit.tick(delta)
 	tempest_t = maxf(0.0, tempest_t - delta)
 	armor_t = maxf(0.0, armor_t - delta)
 	calm_t += delta
@@ -642,6 +794,8 @@ func _update_pads(delta: float) -> void:
 		if d < 1.3 and absf(pp.y - pad.pos.y) < 0.7:
 			player.launch(pad.push + Vector3(0, pad.power, 0))
 			pad_cd = 0.5
+			if pad.has("on_launch"):
+				pad.on_launch.call()
 			sfx.play("pad")
 			var tw: Tween = pad.ring.create_tween()
 			tw.tween_property(pad.ring, "scale", Vector3.ONE * 1.8, 0.15)
@@ -704,6 +858,9 @@ func _update_hud() -> void:
 		skill_txt = "SURCHARGE ACTIVE"
 	elif player.skill >= 100.0:
 		skill_txt = "SURCHARGE PRÊTE · E"
+	var sk := { "pct": 100.0 * skill_t / (Data.CHARACTERS[character].skill_time + up.skill_time) if skill_t > 0.0 else player.skill, "txt": skill_txt, "ready": player.skill >= 100.0 or skill_t > 0.0 }
+	if kit.custom_skill():
+		sk = kit.skill_hud()
 	hud.update_hud({
 		"hp": str(maxi(0, ceili(player.hp))) + (" +%d" % roundi(shield) if shield >= 1.0 else ""), "hp_pct": 100.0 * player.hp / up.max_hp,
 		"roll_pct": 100.0 * (1.0 - player.roll_cd / up.roll_cd),
@@ -717,8 +874,7 @@ func _update_hud() -> void:
 		"mag_flying": player.flying_mags().size() > 0,
 		"boss_pct": 100.0 * boss.hp / boss.max_hp if boss != null and is_instance_valid(boss) and boss.alive else -1.0,
 		"credits": credits, "level": level, "xp_pct": 100.0 * xp / Data.xp_for_level(level), "points": points,
-		"skill_pct": 100.0 * skill_t / (Data.CHARACTERS[character].skill_time + up.skill_time) if skill_t > 0.0 else player.skill,
-		"skill_txt": skill_txt, "skill_ready": player.skill >= 100.0 or skill_t > 0.0,
+		"skill_pct": sk.pct, "skill_txt": sk.txt, "skill_ready": sk.ready,
 		"gren_txt": "%s  %s%s  · G" % [grenade().name.to_upper(), "● ".repeat(gren_charges), "○ ".repeat(gren_max() - gren_charges)],
 		"gren_pct": 100.0 if gren_charges >= gren_max() else 100.0 * gren_prog, "gren_ready": gren_charges > 0,
 		"gren_rate": "×%.1f" % gren_rate(),
@@ -811,6 +967,19 @@ func knockback(e, dir: Vector3, dist: float) -> void:
 func activate_skill() -> void:
 	if state != "play" or skill_t > 0.0:
 		return
+	if kit.custom_skill():
+		if kit.active > 0.0:
+			return
+		if player.skill < 100.0:
+			sfx.play("deny")
+			return
+		player.skill = 0.0
+		sfx.play("skill")
+		hud.flash(Data.CHARACTERS[character].color, 0.8)
+		hud.add_feed(Data.CHARACTERS[character].skill.to_upper(), true)
+		shake = maxf(shake, 0.4)
+		kit.activate()
+		return
 	var free := tempest_t > 0.0
 	if player.skill < 100.0 and not free:
 		sfx.play("deny")
@@ -843,11 +1012,11 @@ func grenade() -> Dictionary:
 	return Data.CHARACTERS[character].grenade
 
 func gren_max() -> int:
-	return 2 if tree.has("s_g1") else 1
+	return (2 if tree.has("s_g1") else 1) + kit.gren_max_bonus()
 
 func gren_rate() -> float:
 	# recharge plus rapide avec une bonne note de style : ×1 en D, ×2 en S, ×2,5 en SSS
-	return (1.0 + 0.25 * rank_idx()) * (1.25 if tree.has("s_t1") else 1.0)
+	return (1.0 + 0.25 * rank_idx()) * (1.25 if tree.has("s_t1") else 1.0) * kit.gren_rate_mult()
 
 func throw_grenade() -> void:
 	if state != "play":
@@ -895,6 +1064,9 @@ func _update_grenades(delta: float) -> void:
 			n.global_position = b
 
 func _grenade_blast(p: Vector3, scale: float) -> void:
+	if kit.custom_grenade():
+		kit.grenade_blast(p, scale)
+		return
 	var G := grenade()
 	var r: float = G.radius * (1.4 if tree.has("s_g2") else 1.0) * scale
 	var col := Color(G.color)
@@ -939,7 +1111,11 @@ func hurt_player(d: float, unavoidable := false) -> bool:
 			add_style("ESQUIVE", 60, true)
 			sfx.play("dodge")
 			hud.flash(Color("3fd0c9"), 0.5)
+			kit.on_dodge()
 		return false
+	if kit.on_hurt_check(d):
+		return false
+	d *= kit.hurt_mult(d)
 	if tree.has("s_r2") and skill_t > Data.CHARACTERS[character].skill_time + up.skill_time - 1.0:
 		return false
 	if tree.has("v_r3") and player.roll_grace > 0.0:
@@ -1017,9 +1193,11 @@ func damage_enemy(en, dmg: float, at: Vector3, ctx := {}) -> void:
 			sfx.play("click")
 	if skill_t > 0.0:
 		surge_hits[en] = true
+	dmg *= kit.dmg_mult(en, ctx)
 	en.hp -= dmg
 	en.flash_t = 0.08
-	burst(at, en.T.color, 4 if en.is_boss else 3, 4.0)
+	if not ctx.get("quiet", false):
+		burst(at, en.T.color, 4 if en.is_boss else 3, 4.0)
 	if en.hp <= 0.0:
 		kill_enemy(en, ctx)
 
@@ -1049,6 +1227,7 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 	if aerial and tree.has("m_a4"):
 		player.roll_cd = 0.0
 	_tree_on_kill(en, c, ctx, aerial)
+	kit.on_kill(en, c, ctx, aerial)
 	if player.roll_t > 0.0 or player.roll_grace > 0.0: add_style("ROULADE MORTELLE", 40, true)
 	if player.slide_t > 0.0: add_style("GLISSADE", 40, true)
 	match src:
@@ -1078,7 +1257,17 @@ func kill_enemy(en, ctx: Dictionary) -> void:
 		for o in enemies.duplicate():
 			if is_instance_valid(o) and o.alive and o != en and o.center().distance_to(c) < 3.5:
 				damage_enemy(o, power, o.center(), { "src": "boom" })
+	if src in ["boom", "mag", "dot"]:
+		boom_kills += 1
+		var f := Engine.get_physics_frames()
+		_boom_n = _boom_n + 1 if f == _boom_frame else 1
+		_boom_frame = f
+		if (_boom_n >= Data.BRACK_BLAST or boom_kills >= Data.BRACK_TOTAL) and not "brack" in unlocked:
+			unlock_char("brack", "Succès Démolition")
 	if en.is_boss:
+		run_bosses += 1
+		if not en.is_mini and zone_idx >= 1:
+			unlock_char("nyx", "Boss de la Fonderie vaincu")
 		boss = null
 		shake = 1.0
 		hitstop(0.4)
@@ -1135,6 +1324,7 @@ func dmg_bonus() -> float:
 
 func gain_xp(n: int) -> void:
 	xp += n
+	run_xp += n
 	while xp >= Data.xp_for_level(level):
 		xp -= Data.xp_for_level(level)
 		level += 1
@@ -1606,7 +1796,8 @@ func pick_tree(id: String) -> void:
 		"m_t1": up.wallrun *= 1.5
 		"m_t2": up.roll_cd *= 0.8
 		"m_g1": up.speed *= 1.08
-	# les autres nœuds sont lus directement dans tree (main.gd et player.gd)
+	kit.apply_node(id)
+	# les autres nœuds sont lus directement dans tree (main.gd et player.gd) ou par le kit du perso
 	if points <= 0:
 		next_between()
 	else:
@@ -1975,6 +2166,137 @@ func _grenade_test() -> void:
 	_clear_round()
 	intermission = 1.0
 
+func _target(type: String, at: Vector3):
+	spawn_enemy(type, 1.0)
+	var e = enemies[-1]
+	e.spawn_t = 0.0
+	e.global_position = at
+	return e
+
+func _aim_at(p: Vector3) -> void:
+	var d: Vector3 = p - player.eye_position()
+	player.yaw = atan2(-d.x, -d.z)
+	player.pitch = atan2(d.y, Vector2(d.x, d.z).length())
+	player.rotation.y = player.yaw
+	player.head.rotation.x = player.pitch
+
+func _chars_only() -> void:
+	# test rapide des persos débloquables, sans faire tout le run
+	print("AUTOTEST start")
+	unlock_all = true
+	if OS.get_environment("HB_SHOTS") != "":
+		Engine.max_physics_steps_per_frame = 40
+		to_menu()
+		await _wait(0.5)
+		await _shot("menu_persos")
+		for w in Data.CHARACTERS.nyx.weapons:
+			start_with(w)
+			_clear_round()
+			player.global_position = Vector3(-30, 0.1, 10)
+			player.yaw = -PI / 2
+			await _wait(0.4)
+			await _shot("gun_" + w)
+	start_with("jumeaux")
+	await _wait(1.0)
+	await _nyx_test()
+	print("AUTOTEST done")
+	get_tree().quit()
+
+func _nyx_test() -> void:
+	# Nyx : Overdrive, Tremplin, Crocs, Harpon et quelques nœuds de l'arbre
+	pick_zone(0)
+	start_with("essaim")
+	await _wait(1.0)
+	print("[nyx] char=%s kit=%s hp=%.0f weapon=%s" % [character, kit.get_script().resource_path.get_file(), player.hp, player.W.name])
+	player.hp = 1e9; up.max_hp = 1e9
+	_clear_round()
+	intermission = 999.0
+	var idle := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
+	player.forced_intent = idle
+	var witness = _target("brute", Vector3(-34, 0.05, -34))
+	enemy_slow = 0.0
+	# Overdrive
+	player.skill = 100.0
+	activate_skill()
+	print("[nyx] overdrive active=%.1f extra_jumps=%d wallrun_inf=%s" % [kit.active, kit.extra_jumps(), kit.wallrun_infinite()])
+	kit.active = 0.0
+	# Tremplin : étourdit et pose un pad
+	player.global_position = Vector3(0, 0.1, 16)
+	var g1 = _target("brute", Vector3(0, 0.05, 8))
+	await _wait(0.2)
+	var pads0: int = city.pads.size()
+	_aim_at(g1.center())
+	gren_charges = 1
+	throw_grenade()
+	await _wait(0.6)
+	print("[nyx] tremplin pads %d -> %d stunned=%s" % [pads0, city.pads.size(), is_instance_valid(g1) and g1.alive and g1.stun_t > 0.0])
+	var tp: Dictionary = city.pads[-1]
+	player.global_position = tp.pos + Vector3(0, 0.1, 0)
+	player.velocity = Vector3.ZERO
+	var top := 0.0
+	for k in 120:
+		await get_tree().physics_frame
+		top = maxf(top, player.global_position.y)
+	print("[nyx] tremplin height=%.1f" % top)
+	_clear_round()
+	witness = _target("brute", Vector3(-34, 0.05, -34))
+	# Crocs : la lame part, touche et revient
+	start_with("crocs")
+	await _wait(0.5)
+	player.hp = 1e9; up.max_hp = 1e9
+	_clear_round(); intermission = 999.0
+	witness = _target("brute", Vector3(-34, 0.05, -34))
+	player.forced_intent = idle
+	enemy_slow = 0.0
+	player.global_position = Vector3(0, 0.1, 16)
+	var b1 = _target("brute", Vector3(0, 0.05, 6))
+	await _wait(0.2)
+	_aim_at(b1.center())
+	var hp0: float = b1.hp
+	player.fire_cd = 0.0
+	player.shoot()
+	var ammo_out: int = player.ammo
+	await _wait(1.2)
+	print("[nyx] crocs dmg=%.0f ammo %d -> %d (mag %d)" % [hp0 - b1.hp, ammo_out, player.ammo, player.W.mag])
+	_clear_round()
+	# Harpon : carreau dans un ennemi puis traction
+	start_with("harpon")
+	await _wait(0.5)
+	player.hp = 1e9; up.max_hp = 1e9
+	_clear_round(); intermission = 999.0
+	witness = _target("brute", Vector3(-34, 0.05, -34))
+	player.forced_intent = idle
+	enemy_slow = 0.0
+	player.global_position = Vector3(0, 0.1, 16)
+	var b2 = _target("brute", Vector3(0, 0.05, -2))
+	await _wait(0.2)
+	_aim_at(b2.center())
+	hp0 = b2.hp
+	player.fire_cd = 0.0
+	player.shoot()
+	var d0: float = player.global_position.distance_to(b2.global_position)
+	print("[nyx] harpon dmg=%.0f anchored=%s tagged=%s" % [hp0 - b2.hp, not kit.anchor.is_empty(), b2.tag_t > 0.0])
+	var alt := idle.duplicate(); alt.alt = true
+	player.forced_intent = alt
+	await get_tree().physics_frame
+	player.forced_intent = idle
+	await _wait(0.6)
+	print("[nyx] pull dist %.1f -> %.1f" % [d0, player.global_position.distance_to(b2.global_position)])
+	# arbre : quelques nœuds
+	state = "between"; screen = "tree"; points = 6
+	for id in ["ny_wt1", "ny_wt2", "ny_h1", "ny_mt1", "ny_mt2", "ny_ma1"]:
+		pick_tree(id)
+	print("[nyx] tree=%s harpon mag=%d jumps=%d" % [str(tree.keys()), player.W.mag, up.jumps + kit.extra_jumps()])
+	if OS.get_environment("HB_SHOTS") != "":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		open_tree()
+		await _wait(0.3)
+		await _shot("nyx_tree")
+	state = "play"; screen = ""
+	enemy_slow = 1.0
+	player.forced_intent = {}
+	_clear_round()
+
 func _route_test(tag: String, pad_at: Vector3, run_from: Vector3, run_yaw: float, shaft_mid: Vector3, shaft_n: Vector3) -> void:
 	# parcours : jump pad vers la passerelle, wall run sur un panneau, montée d'un puits en wall jumps
 	var idle := { "move": Vector2.ZERO, "look": Vector2.ZERO, "jump": false, "roll": false, "slide": false, "reload": false, "skill": false, "fire": false }
@@ -2049,6 +2371,7 @@ func _autotest() -> void:
 		Engine.max_physics_steps_per_frame = 40
 	await _wait(1.5)
 	pick_zone(0)
+	print("[meta] fresh: chars=%s nyx_open=%s brise_porte_open=%s verdict_open=%s" % [str(unlocked), char_open("nyx"), weapon_open("brise_porte"), weapon_open("verdict")])
 	await _shot("menu")
 	var wid: String = Data.WEAPON_ORDER[0]
 	start_with(wid)
@@ -2171,6 +2494,8 @@ func _autotest() -> void:
 	await _drain_between("z1end")
 	await _zone2_test()
 	print("[run] state=%s level=%d credits=%d score=%d" % [state, level, credits, score])
+	print("[meta] after run: chars=%s mastery=%s datas=%d msg=%s brise_porte_open=%s" % [str(unlocked), str(mastery), datas, meta_msg, weapon_open("brise_porte")])
+	unlock_all = true
 	print("[run] tree points spent=%d nodes=%s" % [tree.size(), ", ".join(tree.keys())])
 	await _shot("victory")
 	await _tree_test()
@@ -2201,5 +2526,6 @@ func _autotest() -> void:
 		print("[%s] state after death=%s" % [w2, state])
 		await _wait(0.3)
 	await _shot("over")
+	await _nyx_test()
 	print("AUTOTEST done")
 	get_tree().quit()

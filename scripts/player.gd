@@ -208,6 +208,44 @@ func _build_guns() -> void:
 				_box(g, Vector3(0.052, 0.04, 0.067), trim, Vector3(0, -0.115, 0.095))
 				mag = _box(g, Vector3(0.06, 0.06, 0.02), _mat(Color("d9a441"), false, 0.9, 0.3), Vector3(0, 0.015, 0.0)) # balles
 				muzzle_z = -0.38
+			"smg":
+				# Essaim : SMG lourd compact, chargeur droit, carénage vert électrique
+				_box(g, Vector3(0.075, 0.1, 0.34), body, Vector3(0, 0, -0.02))
+				_box(g, Vector3(0.08, 0.02, 0.3), trim, Vector3(0, 0.06, -0.03))
+				_box(g, Vector3(0.05, 0.05, 0.16), dark, Vector3(0, 0.0, -0.26))
+				for k in 4:
+					_box(g, Vector3(0.056, 0.056, 0.012), trim, Vector3(0, 0.0, -0.2 - k * 0.03))
+				_box(g, Vector3(0.012, 0.03, 0.01), hot, Vector3(0, 0.075, -0.12))
+				var sgp := _box(g, Vector3(0.045, 0.12, 0.05), grip, Vector3(0, -0.08, 0.08))
+				sgp.rotation.x = 0.25
+				_box(g, Vector3(0.05, 0.05, 0.16), dark, Vector3(0, -0.01, 0.22))
+				mag = _box(g, Vector3(0.04, 0.17, 0.05), dark, Vector3(0, -0.12, -0.08))
+				_box(mag, Vector3(0.042, 0.05, 0.052), trim, Vector3(0, -0.04, 0))
+				muzzle_z = -0.36
+			"blades":
+				# Crocs : poing qui tient une lame en croissant, les autres attendent sur l'avant-bras
+				_box(g, Vector3(0.07, 0.07, 0.12), grip, Vector3(0, -0.04, 0.06))
+				_box(g, Vector3(0.075, 0.02, 0.2), trim, Vector3(0, -0.005, 0.14))
+				var bl := _box(g, Vector3(0.025, 0.05, 0.32), body, Vector3(0, 0.03, -0.12))
+				bl.rotation.x = -0.2
+				_box(bl, Vector3(0.027, 0.012, 0.3), trim, Vector3(0, 0.025, 0))
+				_box(g, Vector3(0.01, 0.01, 0.01), hot, Vector3(0, 0.08, -0.27))
+				mag = _box(g, Vector3(0.05, 0.03, 0.08), dark, Vector3(0.05, -0.05, 0.14))
+				muzzle_z = -0.28
+			"crossbow":
+				# Harpon : arbalète à branches, treuil latéral, carreau visible
+				_box(g, Vector3(0.07, 0.08, 0.46), body, Vector3(0, 0, -0.06))
+				_box(g, Vector3(0.5, 0.025, 0.04), dark, Vector3(0, 0.02, -0.26))
+				for x in [-0.25, 0.25]:
+					_box(g, Vector3(0.02, 0.03, 0.06), trim, Vector3(x, 0.02, -0.24))
+				_box(g, Vector3(0.012, 0.012, 0.5), _mat(Color("cfe3ff"), false, 0.9, 0.2), Vector3(0, 0.06, -0.1))
+				_box(g, Vector3(0.02, 0.02, 0.05), hot, Vector3(0, 0.06, -0.37))
+				extra = _box(g, Vector3(0.06, 0.08, 0.08), dark, Vector3(0.06, -0.01, 0.04)) # treuil
+				_box(extra, Vector3(0.062, 0.02, 0.082), trim, Vector3(0, 0.0, 0))
+				var cg := _box(g, Vector3(0.045, 0.12, 0.05), grip, Vector3(0, -0.08, 0.1))
+				cg.rotation.x = 0.25
+				mag = _box(g, Vector3(0.03, 0.03, 0.12), dark, Vector3(0, -0.05, -0.1))
+				muzzle_z = -0.4
 			"rifle":
 				_box(g, Vector3(0.08, 0.1, 0.5), body)
 				_box(g, Vector3(0.05, 0.02, 0.44), dark, Vector3(0, 0.06, -0.02))
@@ -324,6 +362,8 @@ func read_input(delta: float) -> Dictionary:
 		"slide": Input.is_action_just_pressed("slide"),
 		"reload": Input.is_action_just_pressed("reload"),
 		"skill": Input.is_action_just_pressed("skill"),
+		"alt": Input.is_action_just_pressed("alt"),
+		"alt_hold": Input.is_action_pressed("alt"),
 		"grenade": Input.is_action_just_pressed("grenade"),
 		"fire": Input.is_action_pressed("fire"),
 	}
@@ -344,8 +384,10 @@ func jump() -> void:
 		var n := wall_n if wallrun_t > 0.0 else _flat(near)
 		var along := Vector3(velocity.x, 0, velocity.z)
 		along -= n * along.dot(n)
-		velocity = along * 1.05 + n * 8.5
-		velocity.y = M.jump
+		var wb: Vector2 = game.kit.walljump_bonus()
+		velocity = (along * 1.05 + n * 8.5) * wb.x
+		velocity.y = M.jump + wb.y
+		game.kit.on_wall_jump()
 		wallrun_t = 0.0
 		wallrun_cd = 0.35
 		jumps = 1
@@ -365,12 +407,17 @@ func jump() -> void:
 	if is_on_floor():
 		velocity.y = M.jump
 		jumps = 1
-	elif jumps < game.up.jumps:
+		game.kit.on_jump(false)
+	elif jumps < game.up.jumps + game.kit.extra_jumps():
 		velocity.y = M.air_jump * (1.2 if game.tree.has("m_a3") else 1.0)
 		jumps = maxi(jumps, 1) + 1
+		game.kit.on_jump(true)
 
 func roll() -> void:
 	if roll_cd > 0.0 or roll_t > 0.0:
+		return
+	if game.kit.on_roll():
+		roll_cd = game.up.roll_cd
 		return
 	var f := move_input()
 	if f.length() < 0.1:
@@ -401,7 +448,7 @@ func slide() -> void:
 	game.sfx.play("slide")
 
 func start_reload() -> void:
-	if reload_t > 0.0 or ammo == W.mag:
+	if reload_t > 0.0 or ammo == W.mag or not game.kit.can_reload():
 		return
 	reload_t = W.reload
 	reload_fx = {}
@@ -435,6 +482,8 @@ func simulate(it: Dictionary, delta: float) -> void:
 	if it.slide: slide()
 	if it.reload: start_reload()
 	if it.skill: game.activate_skill()
+	if it.get("alt", false) and not game.kit.alt_fire():
+		game.activate_skill()
 	if it.get("grenade", false): game.throw_grenade()
 
 	# arme
@@ -468,20 +517,24 @@ func simulate(it: Dictionary, delta: float) -> void:
 	elif wallrun_t > 0.0:
 		_wallrun_step(delta)
 	else:
-		var spd: float = M.speed * game.up.speed * (1.15 if game.skill_t > 0.0 else 1.0)
+		var spd: float = M.speed * game.up.speed * (1.15 if game.skill_t > 0.0 else 1.0) * game.kit.speed_mult()
 		if is_on_floor():
 			_ground_move(wish, spd, delta)
 		else:
 			_air_move(wish, spd, delta)
 	if wallrun_t <= 0.0:
-		velocity.y -= M.gravity * delta
+		velocity.y -= M.gravity * delta * game.kit.gravity_mult(it.get("jump_hold", false))
 		if game.tree.has("m_a2") and it.get("jump_hold", false) and velocity.y < 0.0 and not is_on_floor():
 			# Planeur : chute lente tant qu'on garde le saut enfoncé
 			velocity.y = maxf(velocity.y + M.gravity * 0.7 * delta, -3.5)
+	var was_floor := is_on_floor()
+	var vy_before := velocity.y
 	move_and_slide()
 	_check_wallrun(it)
 	if is_on_floor():
 		jumps = 0
+		if not was_floor:
+			game.kit.on_land(-vy_before)
 	air = (not is_on_floor() and _height() > 0.5) or wallrun_t > 0.0
 	rotation.y = yaw
 	if global_position.y < -4.0:
@@ -597,7 +650,9 @@ func _wallrun_step(delta: float) -> void:
 	along = along.normalized() * maxf(along.length(), M.speed * game.up.speed)
 	velocity.x = along.x - wall_n.x * 3.0
 	velocity.z = along.z - wall_n.z * 3.0
-	if wall_boost:
+	if game.kit.wallrun_infinite():
+		wallrun_t = maxf(wallrun_t, 0.3)
+	if wall_boost or game.kit.wall_boost():
 		# panneau à chevrons : il fait monter pendant la course
 		velocity.y = move_toward(velocity.y, 2.6, 14.0 * delta)
 	else:
@@ -741,6 +796,8 @@ func _mag_back(G: Dictionary, p: float, a: float, b: float, o: Dictionary) -> vo
 func _eject(G: Dictionary) -> void:
 	G.ejected = true
 	G.mag.visible = false
+	if not game.kit.throws_mags():
+		return
 	var t := ThrownMag.new()
 	t.game = game
 	var mi := MeshInstance3D.new()
@@ -769,13 +826,15 @@ func flying_mags() -> Array:
 
 # ---------- Tir ----------
 func shoot() -> void:
+	if W.has("mode") and game.kit.fire():
+		return
 	if ammo <= 0:
 		start_reload()
 		return
 	var surge: bool = game.skill_t > 0.0
 	if not surge:
 		ammo -= 1
-	fire_cd = W.rate / (1.25 if surge else 1.0) / (1.3 if wallrun_t > 0.0 and game.tree.has("w_j3") else 1.0)
+	fire_cd = W.rate / (1.25 if surge else 1.0) / (1.3 if wallrun_t > 0.0 and game.tree.has("w_j3") else 1.0) / game.kit.rate_mult()
 	shot_count += 1
 	var G: Dictionary = guns[shot_count % guns.size()]
 	G.kick = 1.0
@@ -792,11 +851,14 @@ func shoot() -> void:
 	var basis := cam.global_transform.basis
 	var muzzle: Vector3 = G.g.to_global(G.muzzle)
 	var last_shot: bool = game.up.last_shots > 0 and ammo < game.up.last_shots
-	var dmg_mul: float = (2.0 if last_shot else 1.0) * game.dmg_bonus()
+	var dmg_mul: float = (2.0 if last_shot else 1.0) * game.dmg_bonus() * game.kit.shot_mult()
 	var ram: bool = slide_t > 0.0 and game.tree.has("w_b4")
 	if ram:
 		dmg_mul *= 1.5
-	var spread: float = W.spread
+	var spread: float = W.spread * game.kit.spread_mult()
+	if W.has("move_tight"):
+		# Essaim : la dispersion se resserre avec la vitesse
+		spread *= lerpf(1.0, W.move_tight, clampf(Vector2(velocity.x, velocity.z).length() / 12.0, 0.0, 1.0))
 	if air and W.has("air_precise"):
 		spread *= W.air_precise
 	if air and game.tree.has("w_j1"):
@@ -868,6 +930,7 @@ func shoot() -> void:
 							ammo = mini(W.mag, ammo + 1)
 						game.add_style("EXÉCUTION", 30, true)
 				game.damage_enemy(en, dmg, r.position, ctx)
+				game.kit.on_gun_hit(en, dmg, ctx)
 				if ram:
 					game.knockback(en, dir, 4.0)
 				hit_count += 1
@@ -886,5 +949,6 @@ func shoot() -> void:
 	if hit_any:
 		game.hud.hitmark()
 		game.sfx.play("hit")
+	game.kit.on_shot()
 	if ammo == 0:
 		start_reload()

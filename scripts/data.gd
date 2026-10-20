@@ -2,6 +2,8 @@
 # Tout l'équilibrage se règle ici.
 extends RefCounted
 
+const DC = preload("res://scripts/data_chars.gd")
+
 const WAVES_PER_ZONE := 10 # 7 zones de 10 rounds (mini boss round 5, boss de zone round 10)
 const SHOP_ROUNDS := [3, 6, 9]
 const MINIBOSS_ROUND := 5
@@ -15,13 +17,36 @@ const CHARACTERS := {
 		"blurb": "Ancien nettoyeur de la ville-système. Vit pour l'élan et les kills en l'air.",
 		"skill": "Surcharge", "skill_desc": "Le temps ralentit autour de toi : munitions infinies, +50 % de dégâts, +25 % de cadence.",
 		"weapons": ["jumeaux", "brise_porte", "verdict"],
-		"skill_time": 6.0,
+		"skill_time": 6.0, "hp": 100.0, "speed": 1.0, "kit": "", "color": Color("3fd0c9"),
+		"unlock": "",
 		# consommable : se recharge avec le temps, plus vite quand la note de style est haute
 		"grenade": { "name": "Impulsion", "desc": "Grenade à impact : souffle les ennemis et te propulse si tu es dans l'explosion.",
 			"cd": 15.0, "dmg": 80.0, "radius": 5.0, "color": "4fc3ff" },
 	},
+	"nyx": {
+		"id": "nyx", "name": "Nyx", "title": "la Coureuse",
+		"blurb": "Coursière de toits. Plus elle va vite, plus elle frappe fort, et elle déteste toucher le sol.",
+		"skill": "Overdrive", "skill_desc": "Wall run illimité, triple saut et tirs en l'air +40 % de dégâts.",
+		"weapons": ["essaim", "crocs", "harpon"],
+		"skill_time": 7.0, "hp": 90.0, "speed": 1.06, "kit": "res://scripts/kits/nyx.gd", "color": Color("5effc8"),
+		"unlock": "Bats le boss de la zone 2 (Fonderie)",
+		"grenade": { "name": "Tremplin", "desc": "Étourdit à l'impact et laisse au sol un tremplin qui propulse très haut.",
+			"cd": 15.0, "dmg": 40.0, "radius": 4.5, "color": "5effc8" },
+	},
 }
-const CHARACTER_ORDER := ["kade"]
+const CHARACTER_ORDER := ["kade", "nyx"]
+
+# ---------- Maîtrise (méta-progression par perso) ----------
+# La maîtrise monte avec l'XP gagnée en jouant le perso. Le perso commence avec sa 1re arme unique,
+# la 2e arrive au niveau de maîtrise 2, la 3e au niveau 4.
+const MASTERY_XP := 1800
+const WEAPON_MASTERY := [1, 2, 4]
+const IRIS_PRICE := 600      # palier du Terminal, en Données
+const BRACK_BLAST := 15      # succès Démolition : ennemis tués par une seule explosion
+const BRACK_TOTAL := 500     # ... ou kills par explosion au total
+
+static func mastery_level(mxp: int) -> int:
+	return mini(10, 1 + mxp / MASTERY_XP)
 
 # Arbre en flocon : 4 branches (Armes en haut, Compétence à droite, Survie en bas, Déplacement à gauche).
 # Chaque branche : un tronc de 2 nœuds, puis des sous-branches de 3 nœuds et une pointe (version améliorée).
@@ -29,6 +54,7 @@ const CHARACTER_ORDER := ["kade"]
 # On avance depuis le centre ; un run complet donne environ 22 points, on ne remplit jamais tout.
 # L'effet de chaque id est lu dans main.gd et player.gd (has_node).
 const TREE := {
+	"nyx": DC.NYX_TREE,
 	"kade": [
 		{ "id": "w", "name": "Armes", "dir": Vector2(0, -1), "trunk": [
 			{ "id": "w_t1", "name": "Main lourde", "desc": "Un kill à bout portant recharge l'arme" },
@@ -159,6 +185,30 @@ const WEAPONS := {
 		"sound": "revolver", "color": Color("d6b4ff"), "unique": true,
 		"blurb": "Revolver lourd 6 coups. Un tir à la tête sur un ennemi sous 30 % de vie l'exécute.",
 		"stats": [["Dégâts", "Lourds"], ["Cadence", "Lente"], ["Tête", "Exécute"]],
+	},
+	# --- Nyx ---
+	# mode : blade (lames lancées qui reviennent, pas de rechargement), bolt (carreau qui s'accroche, tir
+	# secondaire pour se tracter). move_tight : la dispersion se resserre avec la vitesse.
+	"essaim": {
+		"id": "essaim", "name": "Essaim", "model": "smg", "move_tight": 0.3,
+		"mag": 40, "rate": 0.07, "dmg": 13.0, "pellets": 1, "spread": 0.06, "reload": 1.1, "kick": 0.008,
+		"sound": "uzi", "color": Color("5effc8"), "unique": true,
+		"blurb": "SMG lourd. La dispersion se resserre tant que tu cours.",
+		"stats": [["Dégâts", "Moyens"], ["Cadence", "Rapide"], ["En course", "Précis"]],
+	},
+	"crocs": {
+		"id": "crocs", "name": "Crocs", "model": "blades", "mode": "blade",
+		"mag": 5, "rate": 0.2, "dmg": 34.0, "pellets": 1, "spread": 0.0, "reload": 0.0, "kick": 0.02,
+		"sound": "spin", "color": Color("5effc8"), "unique": true,
+		"blurb": "Lames de jet qui traversent et reviennent. Pas de rechargement : récupère-les.",
+		"stats": [["Dégâts", "Forts"], ["Lames", "5"], ["Retour", "Sur kill"]],
+	},
+	"harpon": {
+		"id": "harpon", "name": "Harpon", "model": "crossbow", "mode": "bolt", "alt": "Se tracter",
+		"mag": 1, "rate": 0.3, "dmg": 80.0, "pellets": 1, "spread": 0.0, "reload": 0.8, "kick": 0.05,
+		"sound": "revolver", "color": Color("5effc8"), "unique": true,
+		"blurb": "Arbalète. Le carreau s'accroche ; clic droit pour te tracter vers la cible ou le mur.",
+		"stats": [["Dégâts", "Lourds"], ["Carreau", "1"], ["Clic droit", "Grappin"]],
 	},
 	"rifle": {
 		"id": "rifle", "name": "Fusil d'assaut", "model": "rifle", "mag": 30, "rate": 0.085, "dmg": 22.0, "pellets": 1,

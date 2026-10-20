@@ -10,6 +10,8 @@ signal resume_pressed
 signal retry_pressed
 signal menu_pressed
 signal zone_picked(index: int)
+signal char_picked(id: String)
+signal unlock_all_toggled
 
 const INK := Color("e8eef2")
 const DIM := Color("8794a0")
@@ -36,6 +38,8 @@ var banner_t := 0.0
 var boss_box: VBoxContainer
 var weapon_box: GridContainer
 var zone_box: HBoxContainer
+var char_box: HBoxContainer
+var test_btn: Button
 var aug_box: GridContainer
 var shop_box: GridContainer
 var tree_box: Control
@@ -484,11 +488,25 @@ func set_mute(m: bool) -> void:
 # ---------- Écrans ----------
 func _build_menu() -> void:
 	var v := _screen("menu", 900)
+	v.add_theme_constant_override("separation", 10)
 	v.add_child(_caps("Run en zones de 10 rounds"))
 	v.add_child(_title("Horde", "Breaker"))
 	var p := _label("Chaque zone : un mini-boss au round 5, le boss de zone au round 10, un shop après les rounds 3, 6 et 9. Le boss de zone vaincu ouvre la zone suivante, avec ton build. Enchaîne les kills aériens, les wall runs et les tirs de chargeur : ton combo fait monter le score et charge ta compétence.", 16, DIM, false, true)
 	p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(p)
+	v.add_child(_caps("Choisis ton perso"))
+	char_box = HBoxContainer.new()
+	char_box.add_theme_constant_override("separation", 10)
+	char_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var crow := HBoxContainer.new(); crow.add_theme_constant_override("separation", 10)
+	crow.add_child(char_box)
+	test_btn = _button("Mode test : off", false)
+	test_btn.custom_minimum_size = Vector2(250, 40)
+	test_btn.add_theme_font_size_override("font_size", 13)
+	test_btn.tooltip_text = "Débloque tous les persos et toutes les armes, pour tester"
+	test_btn.pressed.connect(func(): unlock_all_toggled.emit())
+	crow.add_child(test_btn)
+	v.add_child(crow)
 	var ch := HBoxContainer.new(); ch.add_theme_constant_override("separation", 18)
 	lbl.char_name = _label("KADE", 26, INK)
 	ch.add_child(lbl.char_name)
@@ -501,24 +519,46 @@ func _build_menu() -> void:
 	v.add_child(_caps("Zone de départ"))
 	zone_box = HBoxContainer.new()
 	zone_box.add_theme_constant_override("separation", 10)
-	v.add_child(zone_box)
+	var zrow := HBoxContainer.new(); zrow.add_theme_constant_override("separation", 18)
+	zrow.add_child(zone_box)
+	lbl.best = _label("", 12, DIM, true)
+	lbl.best.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.best.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	lbl.best.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	zrow.add_child(lbl.best)
+	v.add_child(zrow)
 	v.add_child(_caps("Choisis ton arme pour le run"))
 	weapon_box = GridContainer.new(); weapon_box.columns = 3
 	weapon_box.add_theme_constant_override("h_separation", 12)
 	v.add_child(weapon_box)
-	var keys := GridContainer.new(); keys.columns = 4
+	var keys := GridContainer.new(); keys.columns = 6
 	keys.add_theme_constant_override("h_separation", 18)
-	for row in [["ZQSD / WASD", "Se déplacer"], ["Souris", "Viser, clic gauche pour tirer"], ["Espace", "Sauter, double saut, wall jump"],
-			["Shift", "Roulade invincible"], ["C", "Glissade en courant"], ["Contre un mur", "Saute et avance : wall run"],
-			["R", "Recharger, tire sur le chargeur en vol"], ["E · clic droit", "Compétence quand la jauge est pleine"], ["G · molette", "Grenade, se recharge plus vite avec un bon style"], ["P · Échap", "Pause · M musique"],
-			["Manette", "A saut, LB roulade, B glissade, X recharger, Y compétence, RT tirer"]]:
+	for row in [["ZQSD / WASD", "Se déplacer"], ["Clic gauche", "Tirer"], ["Clic droit", "Tir secondaire"],
+			["Espace", "Saut, wall jump"], ["Shift", "Roulade"], ["C", "Glissade"],
+			["R", "Recharger"], ["E · F", "Compétence"], ["G · molette", "Grenade"],
+			["Contre un mur", "Wall run"], ["P · Échap", "Pause"], ["M", "Musique"],
+			["Manette", "A saut · LB roulade · B glissade"], ["", "X recharger · Y compétence"], ["", "RT tir · LT secondaire"]]:
 		keys.add_child(_label(row[0], 12, WARN, true))
 		keys.add_child(_label(row[1], 12, INK, true))
 	v.add_child(keys)
-	lbl.best = _label("", 12, DIM, true)
-	v.add_child(lbl.best)
 
-func show_menu(character: Dictionary, weapons: Dictionary, chosen: String, best: int, best_wave: int, zones: Array = [], start_zone := 0) -> void:
+func show_menu(character: Dictionary, chars: Array, weapons: Array, chosen: String, best: int, best_wave: int, zones: Array = [], start_zone := 0, meta := "", unlock_all := false) -> void:
+	for c in char_box.get_children():
+		c.queue_free()
+	for C in chars:
+		var locked: bool = C.lock != ""
+		var txt: String = C.name.to_upper() + ("  ·  " + C.skill if not locked else "  ·  verrouillé")
+		var cb := _button(txt, C.id == character.id)
+		cb.custom_minimum_size = Vector2(200, 40)
+		cb.add_theme_font_size_override("font_size", 14)
+		cb.tooltip_text = C.lock if locked else "%s, %s · maîtrise %d" % [C.name, C.title, C.mastery]
+		if locked:
+			cb.modulate = Color(1, 1, 1, 0.45)
+		var cid: String = C.id
+		cb.pressed.connect(func(): char_picked.emit(cid))
+		char_box.add_child(cb)
+	test_btn.text = "Mode test : tout débloqué" if unlock_all else "Mode test : off"
+	test_btn.modulate = Color(1, 0.85, 0.4) if unlock_all else Color(1, 1, 1, 0.7)
 	for c in zone_box.get_children():
 		c.queue_free()
 	for zi in zones.size():
@@ -534,14 +574,21 @@ func show_menu(character: Dictionary, weapons: Dictionary, chosen: String, best:
 	for c in weapon_box.get_children():
 		c.queue_free()
 	var i := 1
-	for id in character.weapons:
-		var w: Dictionary = weapons[id]
+	for e in weapons:
+		var w: Dictionary = e.w
+		var id: String = e.id
 		var last: bool = id == chosen
-		var b := _card(str(i), "Dernière arme jouée" if last else "Arme", WARN, w.name, w.blurb, w.stats, last, "", false, 230.0)
+		var locked: bool = e.lock != ""
+		var tag: String = ("Débloquée en " + e.lock) if locked else ("Dernière arme jouée" if last else "Arme unique")
+		var b := _card(str(i), tag, DIM if locked else WARN, w.name, w.blurb, w.stats, last and not locked, "", locked, 230.0)
 		b.pressed.connect(func(): weapon_picked.emit(id))
 		weapon_box.add_child(b)
 		i += 1
-	lbl.best.text = ("Meilleur score : %d · meilleur round : %d / 10" % [best, best_wave]) if best > 0 else ""
+	var locks := []
+	for C in chars:
+		if C.lock != "":
+			locks.append("%s : %s" % [C.name, C.lock])
+	lbl.best.text = meta + (("  ·  Meilleur score : %d · round %d / 10" % [best, best_wave]) if best > 0 else "") + ("\n" + "\n".join(locks) if locks.size() > 0 else "")
 	show_screen("menu")
 
 func _build_augments() -> void:
@@ -732,6 +779,7 @@ func _build_victory() -> void:
 	v.add_child(g)
 	var note := _label("La zone 3, le souterrain, arrive bientôt.", 15, DIM, false, true)
 	v.add_child(note)
+	lbl.v_meta = _label("", 14, WARN, true); v.add_child(lbl.v_meta)
 	var h := HBoxContainer.new(); h.add_theme_constant_override("separation", 12)
 	var r := _button("Rejouer"); r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	r.pressed.connect(func(): retry_pressed.emit())
@@ -740,13 +788,14 @@ func _build_victory() -> void:
 	h.add_child(r); h.add_child(m)
 	v.add_child(h)
 
-func show_victory(zone_name: String, kills: int, rank: String, score: int, level: int, credits: int) -> void:
+func show_victory(zone_name: String, kills: int, rank: String, score: int, level: int, credits: int, meta := "") -> void:
 	lbl.v_sub.text = ("Boss de zone vaincu · " + zone_name).to_upper()
 	lbl.v_kills.text = str(kills)
 	lbl.v_rank.text = rank
 	lbl.v_level.text = str(level)
 	lbl.v_credits.text = str(credits)
 	lbl.v_score.text = str(score)
+	lbl.v_meta.text = meta
 	show_screen("victory")
 
 func _build_pause() -> void:
@@ -770,6 +819,7 @@ func _build_over() -> void:
 		c.add_child(lbl[k[0]])
 		g.add_child(c)
 	v.add_child(g)
+	lbl.o_meta = _label("", 14, WARN, true); v.add_child(lbl.o_meta)
 	var h := HBoxContainer.new(); h.add_theme_constant_override("separation", 12)
 	var r := _button("Rejouer"); r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	r.pressed.connect(func(): retry_pressed.emit())
@@ -778,7 +828,8 @@ func _build_over() -> void:
 	h.add_child(r); h.add_child(m)
 	v.add_child(h)
 
-func show_over(wave: int, kills: int, rank: String, score: int, level: int) -> void:
+func show_over(wave: int, kills: int, rank: String, score: int, level: int, meta := "") -> void:
+	lbl.o_meta.text = meta
 	lbl.o_wave.text = "%d / 10" % wave
 	lbl.o_level.text = str(level)
 	lbl.o_kills.text = str(kills)

@@ -40,6 +40,16 @@ var boom: Node3D               # bras mécanique : flèche qui tourne
 var arm_angle := 0.0
 var reformed := false          # golem : déjà reformé une fois
 var reform_t := 0.0
+# états infligés par les persos, les grenades et les mods
+var stun_t := 0.0              # étourdi : ne bouge plus, n'attaque plus
+var slow_t := 0.0              # ralenti
+var slow_k := 0.5
+var bleed_t := 0.0             # saignement / brûlure : dégâts par seconde
+var bleed_dps := 0.0
+var mark_t := 0.0              # marqué (Iris)
+var jam_t := 0.0               # tirs désactivés (brouillage)
+var hack_t := 0.0              # piraté : se bat pour le joueur (Iris)
+var tag_t := 0.0               # harponné (Nyx)
 
 func setup(g, tname: String, t: Dictionary, mult: float, boss_def := {}) -> void:
 	game = g
@@ -341,6 +351,26 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 	visual.scale = Vector3.ONE * (0.85 if reformed else 1.0)
+	_tick_status(delta)
+	if not alive:
+		return
+	if stun_t > 0.0:
+		# étourdi : il tangue sur place
+		visual.rotation.z = sin(game.gt * 18.0) * 0.12
+		velocity.x = 0.0; velocity.z = 0.0
+		if not T.get("fly", false):
+			velocity.y = -0.5 if is_on_floor() else velocity.y - 24.0 * delta
+		move_and_slide()
+		return
+	visual.rotation.z = 0.0
+	if slow_t > 0.0:
+		d *= slow_k
+	if hack_t > 0.0 and game.kit.has_method("hacked_ai"):
+		game.kit.hacked_ai(self, d)
+		if not T.get("fly", false):
+			velocity.y = -0.5 if is_on_floor() else velocity.y - 24.0 * delta
+		move_and_slide()
+		return
 	var p = game.player
 	var to: Vector3 = p.global_position - global_position
 	to.y = 0.0
@@ -382,6 +412,33 @@ func _physics_process(delta: float) -> void:
 	for m in body_mats:
 		m.emission_energy_multiplier = e
 
+func _tick_status(delta: float) -> void:
+	stun_t = maxf(0.0, stun_t - delta)
+	slow_t = maxf(0.0, slow_t - delta)
+	mark_t = maxf(0.0, mark_t - delta)
+	jam_t = maxf(0.0, jam_t - delta)
+	tag_t = maxf(0.0, tag_t - delta)
+	if hack_t > 0.0:
+		hack_t -= delta
+		if hack_t <= 0.0 and game.kit.has_method("hack_end"):
+			game.kit.hack_end(self)
+	if bleed_t > 0.0:
+		bleed_t -= delta
+		game.damage_enemy(self, bleed_dps * delta, center(), { "src": "dot", "quiet": true })
+
+func stun(t: float) -> void:
+	if is_boss:
+		t *= 0.3
+	stun_t = maxf(stun_t, t)
+
+func slow(t: float, k := 0.5) -> void:
+	slow_t = maxf(slow_t, t)
+	slow_k = k
+
+func bleed(dps: float, t: float) -> void:
+	bleed_dps = maxf(bleed_dps if bleed_t > 0.0 else 0.0, dps)
+	bleed_t = maxf(bleed_t, t)
+
 func _animate(d: float) -> void:
 	var moving := Vector2(velocity.x, velocity.z).length() > 0.5
 	var t: float = game.gt * 10.0 * maxf(speed, 3.0) / 6.0 + hop_seed
@@ -414,6 +471,8 @@ func _contact(dist: float, d: float) -> void:
 
 func _shoot_at_player(from: Vector3, spd: float, dmg: float, col: Color, size := 0.2) -> void:
 	var p = game.player
+	if jam_t > 0.0 or game.kit.hidden_from(from.distance_to(p.global_position)):
+		return
 	game.fire_shot(from, (p.eye_position() - from).normalized(), spd, dmg, col, size)
 	game.sfx.play("orb")
 
@@ -510,6 +569,8 @@ func _sniper(d: float) -> void:
 
 func _sniper_fire(eye: Vector3) -> void:
 	var p = game.player
+	if jam_t > 0.0:
+		return
 	var dirv := (laser_aim - eye).normalized()
 	var far := eye + dirv * 90.0
 	var pe: Vector3 = p.eye_position() - Vector3(0, 0.5, 0)
